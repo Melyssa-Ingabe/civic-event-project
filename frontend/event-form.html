@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create event · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <div class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:flex lg:gap-8">
+    <div id="admin-sidebar"></div>
+
+    <main id="main" class="flex-1 min-w-0 max-w-3xl">
+      <a href="events.html" class="text-sm link">← Back to events</a>
+      <h1 id="page-title" class="mt-2 text-2xl sm:text-3xl font-bold">Create event</h1>
+      <p class="mt-1 text-slate-600">Fields marked <span aria-hidden="true" class="text-red-700">*</span><span class="sr-only">with an asterisk</span> are required.</p>
+
+      <p id="loading-note" class="hidden mt-4 text-slate-600" role="status">Loading event details…</p>
+      <div id="form-alert" class="hidden mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert"></div>
+
+      <form id="event-form" class="mt-6 card p-6 space-y-6" novalidate>
+        <div>
+          <label for="title" class="label">Title <span class="text-red-700" aria-hidden="true">*</span></label>
+          <input id="title" name="title" type="text" required maxlength="200" class="input" />
+        </div>
+
+        <div>
+          <label for="description" class="label">Description</label>
+          <textarea id="description" name="description" rows="5" class="input" aria-describedby="description-hint"></textarea>
+          <p id="description-hint" class="mt-1 text-sm text-slate-500">What will happen, who it's for, what to bring.</p>
+        </div>
+
+        <div>
+          <label for="location" class="label">Location <span class="text-red-700" aria-hidden="true">*</span></label>
+          <input id="location" name="location" type="text" required class="input" placeholder="e.g. Kigali Convention Centre" />
+        </div>
+
+        <div class="grid gap-6 sm:grid-cols-2">
+          <div>
+            <label for="starts_at" class="label">Starts <span class="text-red-700" aria-hidden="true">*</span></label>
+            <input id="starts_at" name="starts_at" type="datetime-local" required class="input" />
+          </div>
+          <div>
+            <label for="ends_at" class="label">Ends <span class="text-red-700" aria-hidden="true">*</span></label>
+            <input id="ends_at" name="ends_at" type="datetime-local" required class="input" />
+          </div>
+        </div>
+
+        <!-- Published toggle: the events API currently publishes every event, so this is shown but locked -->
+        <div class="flex items-start gap-3 rounded-lg bg-slate-50 p-4 border border-slate-200">
+          <input id="published" type="checkbox" checked disabled class="mt-1 h-4 w-4 accent-indigo-700" aria-describedby="published-hint" />
+          <div>
+            <label for="published" class="text-sm font-medium text-slate-700">Published</label>
+            <p id="published-hint" class="text-sm text-slate-600">Events are visible to everyone as soon as they're saved. The events API doesn't support drafts yet.</p>
+          </div>
+        </div>
+
+        <div>
+          <label for="image" class="label">Event image</label>
+          <input id="image" name="image" type="file" aria-describedby="image-hint"
+                 class="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-800 file:font-semibold hover:file:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 rounded-lg" />
+          <p id="image-hint" class="mt-1 text-sm text-slate-500"></p>
+
+          <!-- Image preview before submit -->
+          <figure id="preview" class="hidden mt-4">
+            <img id="preview-img" src="" alt="Preview of the selected event image" class="w-full max-h-72 object-cover rounded-lg border border-slate-200" />
+            <figcaption class="mt-2 flex items-center justify-between gap-2 text-sm text-slate-600">
+              <span id="preview-label"></span>
+              <button type="button" id="remove-image" class="hidden link text-sm">Remove selection</button>
+            </figcaption>
+          </figure>
+        </div>
+
+        <!-- Upload progress -->
+        <div id="upload-progress" class="hidden">
+          <div class="flex justify-between text-sm text-slate-700"><span>Uploading image…</span><span id="progress-text">0%</span></div>
+          <div class="mt-1 h-2 bg-slate-200 rounded-full overflow-hidden" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="progress-bar" class="h-full w-0 bg-indigo-600 transition-all"></div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap justify-end gap-3 pt-2 border-t border-slate-100">
+          <a id="cancel-link" href="events.html" class="btn btn-secondary">Cancel</a>
+          <button id="submit-btn" type="submit" class="btn btn-primary">Create event</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/events.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 2: only admins can create or edit events.
+      // Normal users are redirected; the backend also blocks them (authorize(['admin']) -> 403).
+      if (!Auth.requireAdmin()) return;
+      Layout.init({ active: 'admin', adminSidebar: 'event-form' });
+
+      const eventId = new URLSearchParams(window.location.search).get('id');
+      const isEdit = !!eventId;
+      const $form = $('#event-form');
+      const $alert = $('#form-alert');
+      const limits = CONFIG.UPLOAD_LIMITS.image;
+      let currentImage = '';   // existing image when editing
+      let objectUrl = null;    // preview URL for a newly chosen file
+
+      $('#image').attr('accept', limits.extensions.map(function (e) { return '.' + e; }).join(','));
+      $('#image-hint').text('JPG, PNG or GIF, up to ' + limits.maxMB + ' MB.');
+
+      // ISO date from the API -> value for <input type="datetime-local"> (local time)
+      function toLocalInput(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      }
+
+      function showPreview(src, label, removable) {
+        $('#preview-img').attr('src', src);
+        $('#preview-label').text(label);
+        $('#remove-image').toggleClass('hidden', !removable);
+        $('#preview').removeClass('hidden');
+      }
+
+      function resetPreview() {
+        if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+        if (currentImage) showPreview(currentImage, 'Current image', false);
+        else $('#preview').addClass('hidden');
+      }
+
+      /* ---------- Edit mode: load the existing event ---------- */
+      if (isEdit) {
+        document.title = 'Edit event · CivicEvents';
+        $('#page-title').text('Edit event');
+        $('#submit-btn').text('Save changes');
+        $('#cancel-link').attr('href', 'event.html?id=' + encodeURIComponent(eventId));
+        $form.find('input, textarea, button').prop('disabled', true);
+        $('#loading-note').removeClass('hidden');
+
+        Api.get('/events/' + encodeURIComponent(eventId))
+          .then(function (res) {
+            const e = res.data || {};
+            $('#title').val(e.title);
+            $('#description').val(e.description);
+            $('#location').val(e.location);
+            $('#starts_at').val(toLocalInput(e.starts_at));
+            $('#ends_at').val(toLocalInput(e.ends_at));
+            currentImage = EventsService.imageUrl(e);
+            resetPreview();
+            $form.find('input, textarea, button').not('#published').prop('disabled', false);
+          })
+          .catch(function (err) {
+            $alert.html(UI.escapeHtml(err.message) + ' <a href="events.html" class="link">Back to events</a>').removeClass('hidden');
+          })
+          .finally(function () { $('#loading-note').addClass('hidden'); });
+      } else {
+        $('#starts_at').attr('min', toLocalInput(new Date().toISOString()));
+      }
+
+      // End can't be before start
+      $('#starts_at').on('change', function () { $('#ends_at').attr('min', $(this).val()); });
+
+      /* ---------- Image choose + preview (size/type checked before upload) ---------- */
+      $('#image').on('change', function () {
+        UI.clearErrors($(this).parent());
+        const file = this.files[0];
+        if (!file) { resetPreview(); return; }
+        const error = UI.validateFile(file, 'image');
+        if (error) {
+          UI.fieldError('#image', error);
+          this.value = '';
+          resetPreview();
+          return;
+        }
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(file);
+        showPreview(objectUrl, 'New image: ' + file.name + ' (' + (file.size / 1024).toFixed(0) + ' KB)', true);
+      });
+
+      $('#remove-image').on('click', function () {
+        $('#image').val('');
+        resetPreview();
+        $('#image').trigger('focus');
+      });
+
+      /* ---------- Submit ---------- */
+      $form.on('submit', function (e) {
+        e.preventDefault();
+        UI.clearErrors($form);
+        $alert.addClass('hidden').text('');
+
+        const title = $('#title').val().trim();
+        const location = $('#location').val().trim();
+        const startsVal = $('#starts_at').val();
+        const endsVal = $('#ends_at').val();
+        const file = $('#image')[0].files[0];
+
+        // Client-side validation (mirrors the backend's required fields)
+        let valid = true;
+        if (!title) { UI.fieldError('#title', 'Please enter a title.'); valid = false; }
+        if (!location) { UI.fieldError('#location', 'Please enter a location.'); valid = false; }
+        if (!startsVal) { UI.fieldError('#starts_at', 'Please choose a start date and time.'); valid = false; }
+        if (!endsVal) { UI.fieldError('#ends_at', 'Please choose an end date and time.'); valid = false; }
+        else if (startsVal && new Date(endsVal) <= new Date(startsVal)) {
+          UI.fieldError('#ends_at', 'The event must end after it starts.'); valid = false;
+        }
+        if (file) {
+          const fileError = UI.validateFile(file, 'image');
+          if (fileError) { UI.fieldError('#image', fileError); valid = false; }
+        }
+        if (!valid) { $form.find('[aria-invalid="true"]').first().trigger('focus'); return; }
+
+        // multipart/form-data: text fields + the file under the key "image"
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('description', $('#description').val().trim());
+        formData.append('location', location);
+        formData.append('starts_at', new Date(startsVal).toISOString());
+        formData.append('ends_at', new Date(endsVal).toISOString());
+        if (file) formData.append('image', file);
+
+        UI.setLoading('#submit-btn', true, isEdit ? 'Saving...' : 'Creating...');
+        if (file) $('#upload-progress').removeClass('hidden');
+
+        const options = {
+          onProgress: function (pct) {
+            $('#progress-bar').css('width', pct + '%');
+            $('#progress-text').text(pct + '%');
+            $('#upload-progress [role="progressbar"]').attr('aria-valuenow', pct);
+          },
+        };
+
+        const request = isEdit
+          ? Api.put('/events/' + encodeURIComponent(eventId), formData, options)
+          : Api.post('/events', formData, options);
+
+        request
+          .then(function (res) {
+            Api.invalidate('/events'); // clear the cached events list
+            const saved = res.data || {};
+            UI.setFlash(isEdit ? 'Event updated.' : 'Event created. Everyone has been notified.', 'success');
+            window.location.href = 'event.html?id=' + encodeURIComponent(saved.id || eventId);
+          })
+          .catch(function (err) {
+            UI.setLoading('#submit-btn', false);
+            $('#upload-progress').addClass('hidden');
+            $alert.text(err.message).removeClass('hidden');
+            $alert[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+      });
+    });
+  </script>
+</body>
+</html>

@@ -21,11 +21,11 @@ const CONFIG = {
   // Items per page on list pages
   PAGE_SIZE: 9,
 
-  // Client-side upload limits (checked BEFORE uploading)
+    // Client-side upload limits - these match backend/src/middlewares/upload.middleware.js
   UPLOAD_LIMITS: {
-    image: { maxMB: 5, types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] },
-    audio: { maxMB: 20, types: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/x-m4a', 'audio/mp4'] },
-    video: { maxMB: 100, types: ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime'] },
+    image: { maxMB: 2, extensions: ['jpg', 'jpeg', 'png', 'gif'] },
+    audio: { maxMB: 5, extensions: ['mp3', 'wav', 'm4a', 'ogg'] },
+    video: { maxMB: 8, extensions: ['mp4', 'mov', 'avi', 'mkv'] },
   },
 };
 

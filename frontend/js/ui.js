@@ -244,15 +244,15 @@ const UI = (function () {
   }
 
   /* ---------- File validation (size/type checked BEFORE upload) ---------- */
-  function validateFile(file, kind) {
+    function validateFile(file, kind) {
     const rules = CONFIG.UPLOAD_LIMITS[kind];
     if (!file) return 'Please choose a file.';
-    if (rules.types.indexOf(file.type) === -1) {
-      return 'This file type is not supported. Please choose a ' + kind + ' file (' +
-        rules.types.map(function (t) { return t.split('/')[1]; }).join(', ') + ').';
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (rules.extensions.indexOf(ext) === -1) {
+      return 'This file type is not supported. Allowed types: ' + rules.extensions.join(', ') + '.';
     }
     if (file.size > rules.maxMB * 1024 * 1024) {
-      return 'This file is too large (' + (file.size / 1024 / 1024).toFixed(1) + ' MB). Maximum is ' + rules.maxMB + ' MB.';
+      return 'This file is too large (' + (file.size / 1024 / 1024).toFixed(1) + ' MB). The maximum is ' + rules.maxMB + ' MB.';
     }
     return null;
   }

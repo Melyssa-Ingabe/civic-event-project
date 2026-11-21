@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Events · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <main id="main" class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-bold">Events</h1>
+        <p class="mt-1 text-slate-600">Discover what's happening in your city and save your spot.</p>
+      </div>
+      <a href="event-form.html" class="btn btn-primary" data-admin-only>+ Create event</a>
+    </div>
+
+    <!-- Search & filters -->
+    <form id="filters" class="mt-6 card p-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5 items-end" role="search" aria-label="Filter events">
+      <div class="sm:col-span-2">
+        <label for="search" class="label">Search</label>
+        <input id="search" type="search" class="input" placeholder="Title, description or place" />
+      </div>
+      <div>
+        <label for="location" class="label">Location</label>
+        <select id="location" class="input"><option value="">All locations</option></select>
+      </div>
+      <div>
+        <label for="when" class="label">When</label>
+        <select id="when" class="input">
+          <option value="all">Any time</option>
+          <option value="upcoming">Upcoming &amp; ongoing</option>
+          <option value="past">Past events</option>
+        </select>
+      </div>
+      <div>
+        <label for="sort" class="label">Sort by</label>
+        <select id="sort" class="input">
+          <option value="soonest">Date: soonest first</option>
+          <option value="latest">Date: latest first</option>
+          <option value="title">Title: A–Z</option>
+        </select>
+      </div>
+      <div>
+        <label for="from" class="label">From date</label>
+        <input id="from" type="date" class="input" />
+      </div>
+      <div>
+        <label for="to" class="label">To date</label>
+        <input id="to" type="date" class="input" />
+      </div>
+      <div class="sm:col-span-2 lg:col-span-3 flex justify-end">
+        <button type="button" id="clear-filters" class="btn btn-secondary">Clear filters</button>
+      </div>
+    </form>
+
+    <!-- Results -->
+    <section class="mt-8" aria-labelledby="results-heading">
+      <h2 id="results-heading" class="sr-only">Event results</h2>
+      <p id="results-summary" class="text-sm text-slate-600 mb-4" aria-live="polite" tabindex="-1"></p>
+      <div id="events-grid" class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3"></div>
+      <nav id="pagination" class="mt-8 flex flex-wrap justify-center gap-2" aria-label="Pagination"></nav>
+    </section>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/events.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user can browse events.
+      // Admin-only controls (Create/Edit/Delete) are marked data-admin-only
+      // or only built for admins inside EventsService.cardHtml().
+      if (!Auth.requireAuth()) return;
+      Layout.init({ active: 'events' });
+
+      const isAdmin = Auth.isAdmin();
+      const PAGE_SIZE = CONFIG.PAGE_SIZE;
+      let events = [];
+      let filtered = [];
+      let page = 1;
+      let searchTimer = null;
+
+      // Search term from the header search bar (?q=...)
+      const q = new URLSearchParams(window.location.search).get('q');
+      if (q) $('#search').val(q);
+
+      /* ---------- Load ---------- */
+      function load() {
+        UI.showSkeleton('#events-grid', 6);
+        $('#pagination').empty();
+        $('#results-summary').text('Loading events…');
+
+        Promise.all([
+          Api.cachedGet('/events', null, 30000), // cached for 30s, cleared on create/update/delete
+          EventsService.loadMyRegistrations().catch(function () { return []; }),
+        ])
+          .then(function (results) {
+            // Normal users only see published events
+            events = Api.toList(results[0]).filter(EventsService.isVisible);
+            fillLocations();
+            applyFilters();
+          })
+          .catch(function (err) {
+            $('#results-summary').text('');
+            UI.showError('#events-grid', err.message, load);
+          });
+      }
+
+      function fillLocations() {
+        const selected = $('#location').val();
+        const locations = [];
+        events.forEach(function (e) {
+          const loc = (e.location || '').trim();
+          if (loc && locations.indexOf(loc) === -1) locations.push(loc);
+        });
+        locations.sort();
+        $('#location').html('<option value="">All locations</option>' + locations.map(function (loc) {
+          return '<option value="' + UI.escapeHtml(loc) + '">' + UI.escapeHtml(loc) + '</option>';
+        }).join('')).val(selected);
+      }
+
+      /* ---------- Filter, sort, paginate ---------- */
+      function applyFilters() {
+        page = 1;
+        const term = $('#search').val().trim().toLowerCase();
+        const loc = $('#location').val();
+        const when = $('#when').val();
+        const from = $('#from').val() ? new Date($('#from').val() + 'T00:00:00') : null;
+        const to = $('#to').val() ? new Date($('#to').val() + 'T23:59:59') : null;
+        const now = new Date();
+
+        filtered = events.filter(function (e) {
+          const text = [e.title, e.description, e.location].join(' ').toLowerCase();
+          if (term && text.indexOf(term) === -1) return false;
+          if (loc && (e.location || '').trim() !== loc) return false;
+
+          const start = e.starts_at ? new Date(e.starts_at) : null;
+          const end = e.ends_at ? new Date(e.ends_at) : start;
+          if (from && (!end || end < from)) return false;
+          if (to && (!start || start > to)) return false;
+          if (when === 'upcoming' && end && end < now) return false;
+          if (when === 'past' && (!end || end >= now)) return false;
+          return true;
+        });
+
+        const sort = $('#sort').val();
+        filtered.sort(function (a, b) {
+          if (sort === 'title') return (a.title || '').localeCompare(b.title || '');
+          const diff = new Date(a.starts_at) - new Date(b.starts_at);
+          return sort === 'latest' ? -diff : diff;
+        });
+
+        render();
+      }
+
+      function render() {
+        const total = filtered.length;
+        const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+        if (page > pages) page = pages;
+
+        if (!events.length) {
+          UI.showEmpty('#events-grid',
+            isAdmin ? 'No events yet. Create the first one!' : 'No events have been published yet. Check back soon.',
+            isAdmin ? '<a href="event-form.html" class="btn btn-primary mt-4">Create event</a>' : '');
+          $('#results-summary').text('');
+          $('#pagination').empty();
+          return;
+        }
+
+        if (!total) {
+          UI.showEmpty('#events-grid', 'No events match your search or filters.',
+            '<button type="button" data-clear class="btn btn-secondary mt-4">Clear filters</button>');
+          $('#results-summary').text('0 events found');
+          $('#pagination').empty();
+          return;
+        }
+
+        const startIdx = (page - 1) * PAGE_SIZE;
+        const items = filtered.slice(startIdx, startIdx + PAGE_SIZE);
+        $('#events-grid').attr('aria-busy', 'false').html(items.map(EventsService.cardHtml).join(''));
+        $('#results-summary').text('Showing ' + (startIdx + 1) + '–' + (startIdx + items.length) + ' of ' + total + ' event' + (total === 1 ? '' : 's'));
+        renderPagination(pages);
+      }
+
+      function renderPagination(pages) {
+        if (pages <= 1) { $('#pagination').empty(); return; }
+        let html = `<button type="button" data-page="${page - 1}" class="btn btn-secondary btn-sm" ${page === 1 ? 'disabled' : ''} aria-label="Previous page">‹ Prev</button>`;
+        for (let i = 1; i <= pages; i++) {
+          html += `<button type="button" data-page="${i}" class="btn btn-sm ${i === page ? 'btn-primary' : 'btn-secondary'}"
+                     ${i === page ? 'aria-current="page"' : ''} aria-label="Page ${i}">${i}</button>`;
+        }
+        html += `<button type="button" data-page="${page + 1}" class="btn btn-secondary btn-sm" ${page === pages ? 'disabled' : ''} aria-label="Next page">Next ›</button>`;
+        $('#pagination').html(html);
+      }
+
+      function clearFilters() {
+        $('#filters')[0].reset();
+        $('#location').val('');
+        applyFilters();
+        $('#search').trigger('focus');
+      }
+
+      /* ---------- Events ---------- */
+      $('#filters').on('submit', function (e) { e.preventDefault(); applyFilters(); });
+      $('#location, #when, #sort, #from, #to').on('change', applyFilters);
+      $('#search').on('input', function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(applyFilters, 250); // wait until the user stops typing
+      });
+      $('#clear-filters').on('click', clearFilters);
+      $('#events-grid').on('click', '[data-clear]', clearFilters);
+
+      $('#pagination').on('click', '[data-page]', function () {
+        page = Number($(this).attr('data-page'));
+        render();
+        $('#results-summary')[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+        $('#results-summary').trigger('focus');
+      });
+
+      // Register (normal users)
+      $('#events-grid').on('click', '[data-register]', function () {
+        const $btn = $(this);
+        const id = $btn.attr('data-register');
+        const event = events.find(function (ev) { return ev.id === id; });
+        UI.setLoading($btn, true, 'Registering...');
+        EventsService.register(id)
+          .then(function () {
+            UI.toast('You\'re registered for "' + event.title + '".');
+            render();
+          })
+          .catch(function (err) {
+            if (err.status === 409) {
+              UI.toast("You're already registered for this event.", 'info');
+              render();
+            } else {
+              UI.setLoading($btn, false);
+              UI.toast(err.message, 'error');
+            }
+          });
+      });
+
+      // Delete (admins)
+      $('#events-grid').on('click', '[data-delete]', function () {
+        const id = $(this).attr('data-delete');
+        const event = events.find(function (ev) { return ev.id === id; });
+        EventsService.deleteEvent(event).then(function (deleted) {
+          if (!deleted) return;
+          events = events.filter(function (ev) { return ev.id !== id; });
+          fillLocations();
+          applyFilters();
+        });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>
