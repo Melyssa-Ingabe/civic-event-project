@@ -140,6 +140,23 @@ const Api = (function () {
     });
   }
 
+    // Lists may come back as data: [...] or data: { rows: [...], pagination: {...} }.
+  // This always returns a plain array.
+  function toList(res) {
+    const data = res && res.data !== undefined ? res.data : res;
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') {
+      const keys = ['items', 'rows', 'results', 'records', 'data', 'events', 'notifications',
+        'announcements', 'promos', 'users', 'registrations', 'attendees', 'feedback'];
+      for (let i = 0; i < keys.length; i++) {
+        if (Array.isArray(data[keys[i]])) return data[keys[i]];
+      }
+      const firstArray = Object.values(data).find(Array.isArray);
+      if (firstArray) return firstArray;
+    }
+    return [];
+  }
+
   return {
     get: function (endpoint, params, options) { return request('GET', endpoint, params, options); },
     post: function (endpoint, body, options) { return request('POST', endpoint, body, options); },
@@ -148,5 +165,6 @@ const Api = (function () {
     del: function (endpoint, options) { return request('DELETE', endpoint, null, options); },
     cachedGet: cachedGet,
     invalidate: invalidate,
+    toList: toList,
   };
 })();
