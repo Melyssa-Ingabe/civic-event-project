@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Users · Admin · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <div class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:flex lg:gap-8">
+    <div id="admin-sidebar"></div>
+
+    <main id="main" class="flex-1 min-w-0">
+      <h1 class="text-2xl sm:text-3xl font-bold">Users</h1>
+      <p class="mt-1 text-slate-600">Enable or disable accounts. Roles can't be changed from the app.</p>
+
+      <!-- Stats -->
+      <div id="user-stats" class="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
+
+      <!-- Filters -->
+      <div class="mt-6 card p-4 grid gap-4 sm:grid-cols-4 items-end" role="search" aria-label="Filter users">
+        <div class="sm:col-span-2">
+          <label for="search" class="label">Search</label>
+          <input id="search" type="search" class="input" placeholder="Name or email" />
+        </div>
+        <div>
+          <label for="role-filter" class="label">Role</label>
+          <select id="role-filter" class="input">
+            <option value="">All roles</option>
+            <option value="admin">Admin</option>
+            <option value="user">User</option>
+          </select>
+        </div>
+        <div>
+          <label for="status-filter" class="label">Status</label>
+          <select id="status-filter" class="input">
+            <option value="">All</option>
+            <option value="active">Active</option>
+            <option value="disabled">Disabled</option>
+          </select>
+        </div>
+      </div>
+
+      <p id="summary" class="mt-6 text-sm text-slate-600" aria-live="polite"></p>
+      <div id="users-wrap" class="mt-3 card overflow-hidden"></div>
+      <nav id="pagination" class="mt-6 flex flex-wrap justify-center gap-2" aria-label="Pagination"></nav>
+    </main>
+  </div>
+
+  <!-- User details dialog (native <dialog>: traps focus and closes with Esc) -->
+  <dialog id="user-dialog" aria-labelledby="user-dialog-title" class="rounded-xl p-0 w-[calc(100%-2rem)] max-w-md backdrop:bg-black/50">
+    <div class="p-6">
+      <div class="flex items-center justify-between gap-2">
+        <h2 id="user-dialog-title" class="text-lg font-semibold">User details</h2>
+        <button type="button" id="close-dialog" class="p-2 rounded-lg text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" aria-label="Close">&times;</button>
+      </div>
+      <div id="user-dialog-body" class="mt-4"></div>
+    </div>
+  </dialog>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 2: admin-only page.
+      // The backend also protects every /api/users admin route with authorize(['admin']).
+      // Admins can enable/disable users and view profiles, but can NOT change roles (by design).
+      if (!Auth.requireAdmin()) return;
+      Layout.init({ active: 'admin', adminSidebar: 'users' });
+
+      const esc = UI.escapeHtml;
+      const me = Auth.getUser();
+      const PAGE_SIZE = 10;
+      let users = [];
+      let filteredUsers = [];
+      let page = 1;
+      let searchTimer = null;
+
+      /* ---------- Load (GET /api/users is paginated on the backend, so fetch all pages) ---------- */
+      function fetchAllUsers() {
+        return Api.get('/users', { page: 1, limit: 100 }).then(function (res) {
+          const first = Api.toList(res);
+          const meta = (res.data && (res.data.pagination || res.data.meta)) || res.pagination || res.meta || {};
+          const totalPages = Number(meta.totalPages || meta.total_pages || meta.pages || 1);
+          if (totalPages <= 1) return first;
+          const requests = [];
+          for (let p = 2; p <= Math.min(totalPages, 20); p++) {
+            requests.push(Api.get('/users', { page: p, limit: 100 }).then(Api.toList));
+          }
+          return Promise.all(requests).then(function (rest) {
+            return rest.reduce(function (all, list) { return all.concat(list); }, first);
+          });
+        });
+      }
+
+      function load() {
+        UI.showSkeleton('#users-wrap', 5, 'row');
+        $('#summary').text('Loading users…');
+        fetchAllUsers()
+          .then(function (list) {
+            const seen = {};
+            users = list.filter(function (u) { if (seen[u.id]) return false; seen[u.id] = true; return true; })
+              .sort(function (a, b) { return (a.full_name || '').localeCompare(b.full_name || ''); });
+            renderStats();
+            applyFilters();
+          })
+          .catch(function (err) {
+            $('#summary').text('');
+            UI.showError('#users-wrap', err.message, load);
+          });
+      }
+
+      function renderStats() {
+        const active = users.filter(function (u) { return u.is_active !== false; }).length;
+        const admins = users.filter(function (u) { return u.role === 'admin'; }).length;
+        const stats = [
+          { label: 'Total users', value: users.length, border: 'border-l-indigo-600' },
+          { label: 'Admins', value: admins, border: 'border-l-amber-500' },
+          { label: 'Active', value: active, border: 'border-l-emerald-600' },
+          { label: 'Disabled', value: users.length - active, border: 'border-l-rose-600' },
+        ];
+        $('#user-stats').html(stats.map(function (s) {
+          return `<div class="card p-4 border-l-4 ${s.border}"><p class="text-sm text-slate-600">${s.label}</p><p class="mt-1 text-2xl font-bold">${s.value}</p></div>`;
+        }).join(''));
+      }
+
+      /* ---------- Filter + paginate ---------- */
+      function applyFilters() {
+        page = 1;
+        const term = $('#search').val().trim().toLowerCase();
+        const role = $('#role-filter').val();
+        const status = $('#status-filter').val();
+        filteredUsers = users.filter(function (u) {
+          if (term && ((u.full_name || '') + ' ' + (u.email || '')).toLowerCase().indexOf(term) === -1) return false;
+          if (role && u.role !== role) return false;
+          if (status === 'active' && u.is_active === false) return false;
+          if (status === 'disabled' && u.is_active !== false) return false;
+          return true;
+        });
+        render();
+      }
+
+      function rowHtml(u) {
+        const isMe = u.id === me.id;
+        const active = u.is_active !== false;
+        const name = esc(u.full_name);
+        const initials = (u.full_name || '?').split(' ').map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase();
+
+        // Admins can't disable themselves (would lock them out)
+        const toggleBtn = isMe
+          ? '<span class="text-xs text-slate-500">This is you</span>'
+          : `<button type="button" data-toggle-active="${esc(u.id)}" class="btn btn-sm ${active ? 'btn-danger' : 'btn-primary'}"
+                     aria-label="${active ? 'Disable' : 'Enable'} ${name}">${active ? 'Disable' : 'Enable'}</button>`;
+
+        return `
+          <tr class="${active ? '' : 'bg-slate-50'}">
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-3">
+                <span class="h-9 w-9 shrink-0 rounded-full ${active ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-200 text-slate-600'} text-sm font-bold flex items-center justify-center" aria-hidden="true">${esc(initials)}</span>
+                <div class="min-w-0">
+                  <p class="font-medium text-slate-900">${name}${isMe ? ' <span class="text-xs text-slate-500">(you)</span>' : ''}</p>
+                  <p class="text-xs text-slate-600 sm:hidden truncate">${esc(u.email)}</p>
+                </div>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-slate-600 hidden sm:table-cell">${esc(u.email)}</td>
+            <td class="px-4 py-3"><span class="text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${u.role === 'admin' ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-800'}">${esc(u.role)}</span></td>
+            <td class="px-4 py-3"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${active ? 'Active' : 'Disabled'}</span></td>
+            <td class="px-4 py-3 text-slate-600 hidden lg:table-cell">${u.created_at ? esc(UI.formatDate(u.created_at, false)) : '—'}</td>
+            <td class="px-4 py-3">
+              <div class="flex items-center justify-end gap-2 whitespace-nowrap">
+                <button type="button" data-view="${esc(u.id)}" class="btn btn-secondary btn-sm" aria-label="View profile of ${name}">View</button>
+                ${toggleBtn}
+              </div>
+            </td>
+          </tr>`;
+      }
+
+      function render() {
+        const total = filteredUsers.length;
+        const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+        if (page > pages) page = pages;
+
+        if (!total) {
+          $('#summary').text('0 users found');
+          UI.showEmpty('#users-wrap', users.length ? 'No users match your filters.' : 'No users yet.');
+          $('#pagination').empty();
+          return;
+        }
+
+        const start = (page - 1) * PAGE_SIZE;
+        const pageItems = filteredUsers.slice(start, start + PAGE_SIZE);
+        $('#summary').text('Showing ' + (start + 1) + '–' + (start + pageItems.length) + ' of ' + total + ' user' + (total === 1 ? '' : 's'));
+        $('#users-wrap').attr('aria-busy', 'false').html(`
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+              <caption class="sr-only">Registered users</caption>
+              <thead class="bg-slate-50 border-b border-slate-200 text-slate-600">
+                <tr>
+                  <th scope="col" class="px-4 py-3 font-semibold">Name</th>
+                  <th scope="col" class="px-4 py-3 font-semibold hidden sm:table-cell">Email</th>
+                  <th scope="col" class="px-4 py-3 font-semibold">Role</th>
+                  <th scope="col" class="px-4 py-3 font-semibold">Status</th>
+                  <th scope="col" class="px-4 py-3 font-semibold hidden lg:table-cell">Joined</th>
+                  <th scope="col" class="px-4 py-3 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-body" class="divide-y divide-slate-100">${pageItems.map(rowHtml).join('')}</tbody>
+            </table>
+          </div>`);
+
+        if (pages > 1) {
+          $('#pagination').html(
+            `<button type="button" data-page="${page - 1}" class="btn btn-secondary btn-sm" ${page === 1 ? 'disabled' : ''} aria-label="Previous page">‹ Prev</button>
+             <span class="self-center text-sm text-slate-600 px-2">Page ${page} of ${pages}</span>
+             <button type="button" data-page="${page + 1}" class="btn btn-secondary btn-sm" ${page === pages ? 'disabled' : ''} aria-label="Next page">Next ›</button>`);
+        } else {
+          $('#pagination').empty();
+        }
+      }
+
+      /* ---------- View profile (GET /api/users/:id) ---------- */
+      const dialog = document.getElementById('user-dialog');
+
+      function openUser(id) {
+        $('#user-dialog-body').html('<p class="text-slate-600" role="status">Loading…</p>');
+        dialog.showModal();
+        Api.get('/users/' + encodeURIComponent(id))
+          .then(function (res) {
+            const u = res.data || {};
+            const active = u.is_active !== false;
+            $('#user-dialog-body').html(`
+              <dl class="divide-y divide-slate-100 text-sm">
+                <div class="py-2 grid grid-cols-3 gap-2"><dt class="text-slate-500">Name</dt><dd class="col-span-2 font-medium">${esc(u.full_name)}</dd></div>
+                <div class="py-2 grid grid-cols-3 gap-2"><dt class="text-slate-500">Email</dt><dd class="col-span-2 break-all">${esc(u.email)}</dd></div>
+                <div class="py-2 grid grid-cols-3 gap-2"><dt class="text-slate-500">Role</dt><dd class="col-span-2 capitalize">${esc(u.role)} <span class="block text-xs text-slate-500 normal-case">Roles can't be changed from the app.</span></dd></div>
+                <div class="py-2 grid grid-cols-3 gap-2"><dt class="text-slate-500">Status</dt><dd class="col-span-2">${active ? 'Active' : 'Disabled'}</dd></div>
+                <div class="py-2 grid grid-cols-3 gap-2"><dt class="text-slate-500">Joined</dt><dd class="col-span-2">${u.created_at ? esc(UI.formatDate(u.created_at)) : '—'}</dd></div>
+                <div class="py-2 grid grid-cols-3 gap-2"><dt class="text-slate-500">Updated</dt><dd class="col-span-2">${u.updated_at ? esc(UI.formatDate(u.updated_at)) : '—'}</dd></div>
+              </dl>`);
+          })
+          .catch(function (err) {
+            UI.showError('#user-dialog-body', err.message, function () { openUser(id); });
+          });
+      }
+
+      $('#close-dialog').on('click', function () { dialog.close(); });
+      dialog.addEventListener('click', function (e) { if (e.target === dialog) dialog.close(); }); // click outside
+
+      /* ---------- Events ---------- */
+      $('#search').on('input', function () { clearTimeout(searchTimer); searchTimer = setTimeout(applyFilters, 250); });
+      $('#role-filter, #status-filter').on('change', applyFilters);
+
+      $('#pagination').on('click', '[data-page]', function () {
+        page = Number($(this).attr('data-page'));
+        render();
+        $('#summary')[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+
+      $('#users-wrap').on('click', '[data-view]', function () { openUser($(this).attr('data-view')); });
+
+      // Enable / disable (PATCH /api/users/:id/enable | /disable) with optimistic UI
+      $('#users-wrap').on('click', '[data-toggle-active]', function () {
+        const id = $(this).attr('data-toggle-active');
+        const user = users.find(function (u) { return u.id === id; });
+        const enable = user.is_active === false;
+
+        const confirmStep = enable
+          ? Promise.resolve(true)
+          : UI.confirmDialog({
+              title: 'Disable this account?',
+              message: user.full_name + " won't be able to log in until you enable the account again.",
+              confirmText: 'Disable account',
+            });
+
+        confirmStep.then(function (ok) {
+          if (!ok) return;
+          user.is_active = enable; // optimistic: update the UI immediately
+          renderStats();
+          render();
+          Api.patch('/users/' + encodeURIComponent(id) + (enable ? '/enable' : '/disable'))
+            .then(function () { UI.toast(user.full_name + "'s account was " + (enable ? 'enabled.' : 'disabled.')); })
+            .catch(function (err) {
+              user.is_active = !enable; // revert on failure
+              renderStats();
+              render();
+              UI.toast(err.message, 'error');
+            });
+        });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My profile · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <main id="main" class="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <h1 class="text-2xl sm:text-3xl font-bold">My profile</h1>
+    <p class="mt-1 text-slate-600">View and update your account details.</p>
+
+    <div class="mt-6 grid gap-6 lg:grid-cols-3">
+      <!-- Summary card -->
+      <section id="profile-card" class="card p-6 lg:col-span-1" aria-labelledby="summary-heading">
+        <h2 id="summary-heading" class="sr-only">Account summary</h2>
+      </section>
+
+      <!-- Edit form -->
+      <section class="card p-6 lg:col-span-2" aria-labelledby="edit-heading">
+        <h2 id="edit-heading" class="text-lg font-semibold">Edit details</h2>
+        <div id="form-alert" class="hidden mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert"></div>
+
+        <form id="profile-form" class="mt-4 space-y-5" novalidate>
+          <div>
+            <label for="full_name" class="label">Full name</label>
+            <input id="full_name" type="text" autocomplete="name" required class="input" disabled />
+          </div>
+          <div>
+            <label for="email" class="label">Email address</label>
+            <input id="email" type="email" autocomplete="email" required class="input" disabled aria-describedby="email-hint" />
+            <p id="email-hint" class="mt-1 text-sm text-slate-500">You'll use this email to log in.</p>
+          </div>
+
+          <!-- Read-only: role and status can't be changed by the user (backend rejects them too) -->
+          <div class="grid gap-5 sm:grid-cols-2">
+            <div>
+              <label for="role" class="label">Role</label>
+              <input id="role" type="text" class="input capitalize" disabled aria-describedby="locked-hint" />
+            </div>
+            <div>
+              <label for="status" class="label">Account status</label>
+              <input id="status" type="text" class="input" disabled aria-describedby="locked-hint" />
+            </div>
+          </div>
+          <p id="locked-hint" class="text-sm text-slate-500">Your role and account status can't be changed here.</p>
+
+          <div class="flex flex-wrap justify-end gap-3 pt-2 border-t border-slate-100">
+            <button type="button" id="reset-btn" class="btn btn-secondary" disabled>Reset</button>
+            <button type="submit" id="save-btn" class="btn btn-primary" disabled>Save changes</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <!-- Quick links -->
+    <section class="mt-6 card p-6" aria-labelledby="links-heading">
+      <h2 id="links-heading" class="text-lg font-semibold">Quick links</h2>
+      <ul class="mt-3 flex flex-wrap gap-3">
+        <li data-user-only><a href="my-registrations.html" class="btn btn-secondary">My registrations</a></li>
+        <li><a href="notifications.html" class="btn btn-secondary">My notifications</a></li>
+        <li data-admin-only><a href="admin-users.html" class="btn btn-secondary">Admin panel</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user can view and edit THEIR OWN profile.
+      // Only full_name and email are editable; role and is_active are read-only
+      // (the backend's validator also rejects "role" and "is_active").
+      if (!Auth.requireAuth()) return;
+      Layout.init({});
+
+      const esc = UI.escapeHtml;
+      const $form = $('#profile-form');
+      const $alert = $('#form-alert');
+      const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      let profile = null;
+
+      function load() {
+        $('#profile-card').html('<div class="animate-pulse" aria-hidden="true"><div class="h-16 w-16 rounded-full bg-slate-200"></div><div class="mt-4 h-5 bg-slate-200 rounded w-2/3"></div><div class="mt-2 h-4 bg-slate-200 rounded w-full"></div></div>');
+        Api.get('/users/profile/me')
+          .then(function (res) {
+            profile = res.data;
+            render();
+            $form.find('#full_name, #email, #reset-btn, #save-btn').prop('disabled', false);
+          })
+          .catch(function (err) { UI.showError('#profile-card', err.message, load); });
+      }
+
+      function render() {
+        const initials = (profile.full_name || '?').split(' ').map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase();
+        const active = profile.is_active !== false;
+        const isAdmin = profile.role === 'admin';
+
+        $('#profile-card').html(`
+          <div class="flex flex-col items-center text-center">
+            <span class="h-20 w-20 rounded-full bg-indigo-700 text-white text-2xl font-bold flex items-center justify-center" aria-hidden="true">${esc(initials)}</span>
+            <p class="mt-4 text-lg font-semibold">${esc(profile.full_name)}</p>
+            <p class="text-sm text-slate-600 break-all">${esc(profile.email)}</p>
+            <div class="mt-3 flex flex-wrap justify-center gap-2">
+              <span class="text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${isAdmin ? 'bg-amber-100 text-amber-900' : 'bg-indigo-100 text-indigo-800'}">${esc(profile.role)}</span>
+              <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${active ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}">${active ? 'Active' : 'Disabled'}</span>
+            </div>
+            ${profile.created_at ? `<p class="mt-4 text-sm text-slate-500">Member since ${esc(UI.formatDate(profile.created_at, false))}</p>` : ''}
+          </div>`);
+
+        $('#full_name').val(profile.full_name);
+        $('#email').val(profile.email);
+        $('#role').val(profile.role);
+        $('#status').val(active ? 'Active' : 'Disabled');
+      }
+
+      $('#reset-btn').on('click', function () {
+        UI.clearErrors($form);
+        $alert.addClass('hidden');
+        render();
+      });
+
+      $form.on('submit', function (e) {
+        e.preventDefault();
+        UI.clearErrors($form);
+        $alert.addClass('hidden').text('');
+
+        const fullName = $('#full_name').val().trim();
+        const email = $('#email').val().trim();
+
+        let valid = true;
+        if (fullName.length < 2) { UI.fieldError('#full_name', 'Please enter your full name.'); valid = false; }
+        if (!EMAIL_REGEX.test(email)) { UI.fieldError('#email', 'Please enter a valid email, e.g. name@example.com.'); valid = false; }
+        if (!valid) { $form.find('[aria-invalid="true"]').first().trigger('focus'); return; }
+
+        // Only send what changed - never role or is_active
+        const changes = {};
+        if (fullName !== profile.full_name) changes.full_name = fullName;
+        if (email !== profile.email) changes.email = email;
+        if (!Object.keys(changes).length) { UI.toast('Nothing to save. Your details are unchanged.', 'info'); return; }
+
+        // Changing the login email needs a confirmation
+        const confirmStep = changes.email
+          ? UI.confirmDialog({
+              title: 'Change your email?',
+              message: 'From now on you will log in with ' + email + '.',
+              confirmText: 'Yes, change it',
+              danger: false,
+            })
+          : Promise.resolve(true);
+
+        confirmStep.then(function (ok) {
+          if (!ok) return;
+          UI.setLoading('#save-btn', true, 'Saving...');
+
+          Api.patch('/users/profile/me', changes)
+            .then(function (res) {
+              profile = Object.assign({}, profile, changes, res.data || {});
+              Auth.updateUser({ full_name: profile.full_name, email: profile.email }); // keep the auth context in sync
+              $('#profile-btn .truncate').text(profile.full_name);
+              $('#profile-menu p.truncate').first().text(profile.full_name);
+              $('#profile-menu p.truncate').eq(1).text(profile.email);
+              render();
+              UI.toast('Your profile was updated.');
+            })
+            .catch(function (err) {
+              // 409 Conflict (or a duplicate-key error) = that email belongs to another account
+              const emailTaken = changes.email && (err.status === 409 || /exist|already|duplicate|taken|unique/i.test(err.message) || err.status >= 500);
+              if (emailTaken) {
+                UI.fieldError('#email', 'This email is already used by another account. Please use a different one.');
+                $('#email').trigger('focus');
+              } else {
+                $alert.text(err.message).removeClass('hidden');
+              }
+            })
+            .finally(function () { UI.setLoading('#save-btn', false); });
+        });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>
