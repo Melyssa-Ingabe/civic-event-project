@@ -28,6 +28,7 @@ const Layout = (function () {
     { key: 'events', label: 'Events', href: 'events.html' },
     { key: 'announcements', label: 'Announcements', href: 'announcements.html' },
     { key: 'promos', label: 'Promos', href: 'promos.html' },
+    { key: 'services', label: 'Services', href: 'services.html' },
     // ROLE GUARD (UI): the "Admin" link is only rendered for admins
     { key: 'admin', label: 'Admin', href: 'admin-users.html', adminOnly: true },
   ];
@@ -252,6 +253,7 @@ const Layout = (function () {
       { key: 'dashboard', label: 'Overview', href: 'dashboard.html' },
       { key: 'users', label: 'Users', href: 'admin-users.html' },
       { key: 'notifications', label: 'Notifications', href: 'notifications.html' },
+      { key: 'services', label: 'Service requests', href: 'services.html' },
       { key: 'event-form', label: '+ New event', href: 'event-form.html' },
       { key: 'announcement-form', label: '+ New announcement', href: 'announcement-form.html' },
       { key: 'promo-form', label: '+ New promo', href: 'promo-form.html' },

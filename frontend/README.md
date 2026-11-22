@@ -18,6 +18,7 @@ An accessible, responsive frontend for the CivicEvents+ API: city events, audio 
 | Notifications | Bell with unread count, drawer, inbox, detail with link to the related event | Delete one or many (admin form) |
 | Profile | Update name and email (role/status locked) | Same |
 | Users | – | List, search, filter, view profile, enable / disable (roles can't be changed) |
+| Service requests | Request a city service (types from `serviceTypes.js`), track status, withdraw | Review all requests, filter, update status, reply to the resident |
 
 ---
 
@@ -105,6 +106,7 @@ frontend/
 ├── notification.html          Notification detail
 ├── profile.html               My profile
 ├── admin-users.html           User management (admin)
+├── services.html              City service requests (users submit, admins manage)
 ├── css/styles.css             Shared component classes (buttons, inputs, cards)
 └── js/
     ├── config.js              API base URL, storage keys, upload limits
@@ -113,6 +115,7 @@ frontend/
     ├── api.js                 $.ajax wrapper: Bearer token, error handling, uploads, caching
     ├── layout.js              Navbar, notification bell/drawer, footer, admin sidebar
     ├── events.js              Shared event helpers (cards, register/cancel, delete)
+    ├── service-requests.js    Service requests storage (localStorage – no API endpoint exists)
     └── media.js               Audio player, captions (WebVTT), publish/unpublish, lazy videos
 ```
 
@@ -164,6 +167,7 @@ frontend/
 | Promo captions are stored as plain text | Converted to a WebVTT `<track>` in the browser and also shown as a transcript |
 | No list pagination/filter query params | Search, filters and pagination are done client-side |
 | Deleting an event with registrations fails (no cascade) | A clear error message is shown |
+| No service-request endpoints (only `utils/serviceTypes.js` exists) | Service requests are fully built in the UI (users submit and track, admins update status and reply) but stored in `localStorage`. All storage is in `js/service-requests.js`, so only that file changes when an API is added |
 
 ---
 

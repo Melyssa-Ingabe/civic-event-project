@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>City services · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <div class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:flex lg:gap-8">
+    <div id="admin-sidebar" data-admin-only></div>
+
+    <main id="main" class="flex-1 min-w-0">
+      <h1 id="page-title" class="text-2xl sm:text-3xl font-bold">City services</h1>
+      <p id="page-intro" class="mt-1 text-slate-600">Report a problem or request help from the city, then track its progress.</p>
+
+      <!-- Honest note: there's no backend endpoint for this feature -->
+      <div class="mt-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" role="note">
+        <strong>Note:</strong> The CivicEvents API doesn't have service-request endpoints yet, so requests are saved on this device only.
+      </div>
+
+      <!-- ================= NORMAL USERS ================= -->
+      <div data-user-only>
+        <!-- Service types -->
+        <section class="mt-8" aria-labelledby="types-heading">
+          <h2 id="types-heading" class="text-xl font-semibold">What do you need help with?</h2>
+          <div id="types-grid" class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"></div>
+        </section>
+
+        <!-- Request form -->
+        <section class="mt-8 card p-6" aria-labelledby="form-heading">
+          <h2 id="form-heading" class="text-xl font-semibold" tabindex="-1">Request a service</h2>
+          <p class="mt-1 text-sm text-slate-600">Fields marked <span aria-hidden="true" class="text-red-700">*</span><span class="sr-only">with an asterisk</span> are required.</p>
+          <div id="form-alert" class="hidden mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert"></div>
+
+          <form id="request-form" class="mt-4 grid gap-5 sm:grid-cols-2" novalidate>
+            <div>
+              <label for="type" class="label">Service type <span class="text-red-700" aria-hidden="true">*</span></label>
+              <select id="type" required class="input"><option value="">Choose a type…</option></select>
+            </div>
+            <div>
+              <label for="location" class="label">Location <span class="text-red-700" aria-hidden="true">*</span></label>
+              <input id="location" type="text" required class="input" placeholder="e.g. KG 11 Ave, near the market" />
+            </div>
+            <div class="sm:col-span-2">
+              <label for="title" class="label">Short title <span class="text-red-700" aria-hidden="true">*</span></label>
+              <input id="title" type="text" required maxlength="120" class="input" placeholder="e.g. Large pothole outside the school" />
+            </div>
+            <div class="sm:col-span-2">
+              <label for="description" class="label">Details <span class="text-red-700" aria-hidden="true">*</span></label>
+              <textarea id="description" rows="4" required maxlength="1000" class="input" aria-describedby="description-count"></textarea>
+              <p id="description-count" class="mt-1 text-xs text-slate-500 text-right">0/1000</p>
+            </div>
+            <div class="sm:col-span-2 flex justify-end gap-3">
+              <button type="reset" class="btn btn-secondary">Clear</button>
+              <button type="submit" id="submit-btn" class="btn btn-primary">Submit request</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- My requests -->
+        <section class="mt-8" aria-labelledby="my-heading">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <h2 id="my-heading" class="text-xl font-semibold" tabindex="-1">My requests</h2>
+            <div>
+              <label for="my-status" class="label">Status</label>
+              <select id="my-status" class="input py-2"><option value="">All</option></select>
+            </div>
+          </div>
+          <ul id="my-list" class="mt-4 space-y-4" aria-live="polite"></ul>
+        </section>
+      </div>
+
+      <!-- ================= ADMINS ================= -->
+      <div data-admin-only>
+        <div id="admin-stats" class="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-4"></div>
+
+        <div class="mt-6 card p-4 grid gap-4 sm:grid-cols-4 items-end" role="search" aria-label="Filter service requests">
+          <div class="sm:col-span-2">
+            <label for="admin-search" class="label">Search</label>
+            <input id="admin-search" type="search" class="input" placeholder="Title, location or requester" />
+          </div>
+          <div>
+            <label for="admin-type" class="label">Type</label>
+            <select id="admin-type" class="input"><option value="">All types</option></select>
+          </div>
+          <div>
+            <label for="admin-status" class="label">Status</label>
+            <select id="admin-status" class="input"><option value="">All</option></select>
+          </div>
+        </div>
+
+        <p id="admin-summary" class="mt-6 text-sm text-slate-600" aria-live="polite"></p>
+        <ul id="admin-list" class="mt-3 space-y-4"></ul>
+      </div>
+    </main>
+  </div>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/service-requests.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user can open this page.
+      // ROLE GUARD (UI): normal users see the request form + their own requests (data-user-only);
+      // admins see every request and can change its status (data-admin-only).
+      if (!Auth.requireAuth()) return;
+      Layout.init({ active: 'services', adminSidebar: 'services' });
+
+      const esc = UI.escapeHtml;
+      const isAdmin = Auth.isAdmin();
+      let requests = [];
+      let searchTimer = null;
+
+      const statusOptions = Object.keys(ServiceRequests.STATUSES).map(function (key) {
+        return '<option value="' + key + '">' + ServiceRequests.STATUSES[key].label + '</option>';
+      }).join('');
+      const typeOptions = ServiceRequests.TYPES.map(function (t) {
+        return '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>';
+      }).join('');
+
+      function load() {
+        const $target = isAdmin ? $('#admin-list') : $('#my-list');
+        UI.showSkeleton($target, 3, 'row');
+        ServiceRequests.list()
+          .then(function (list) {
+            requests = list;
+            isAdmin ? renderAdmin() : renderMine();
+          })
+          .catch(function (err) { UI.showError($target, err.message, load); });
+      }
+
+      /* ================= NORMAL USERS ================= */
+      function initUser() {
+        $('#type').append(typeOptions);
+        $('#my-status').append(statusOptions);
+
+        $('#types-grid').html(ServiceRequests.TYPES.map(function (t) {
+          return `
+            <div class="card p-5 flex flex-col">
+              <h3 class="font-semibold text-slate-900">${esc(t.name)}</h3>
+              <p class="mt-1 text-sm text-slate-600 flex-1">${esc(t.description)}</p>
+              <button type="button" data-pick-type="${esc(t.name)}" class="btn btn-secondary btn-sm mt-4 self-start"
+                      aria-label="Request ${esc(t.name)}">Request this</button>
+            </div>`;
+        }).join(''));
+
+        // Clicking a type pre-fills the form and moves focus there
+        $('#types-grid').on('click', '[data-pick-type]', function () {
+          $('#type').val($(this).attr('data-pick-type'));
+          $('#form-heading')[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+          $('#title').trigger('focus');
+        });
+
+        $('#description').on('input', function () {
+          $('#description-count').text($(this).val().length + '/1000');
+        });
+
+        $('#request-form').on('reset', function () {
+          UI.clearErrors(this);
+          $('#form-alert').addClass('hidden');
+          setTimeout(function () { $('#description-count').text('0/1000'); }, 0);
+        });
+
+        $('#request-form').on('submit', function (e) {
+          e.preventDefault();
+          const $form = $(this);
+          UI.clearErrors($form);
+          $('#form-alert').addClass('hidden');
+
+          const data = {
+            type: $('#type').val(),
+            location: $('#location').val().trim(),
+            title: $('#title').val().trim(),
+            description: $('#description').val().trim(),
+          };
+
+          // Client-side validation
+          let valid = true;
+          if (!data.type) { UI.fieldError('#type', 'Please choose a service type.'); valid = false; }
+          if (!data.location) { UI.fieldError('#location', 'Please tell us where the problem is.'); valid = false; }
+          if (data.title.length < 5) { UI.fieldError('#title', 'Please add a short title (at least 5 characters).'); valid = false; }
+          if (data.description.length < 10) { UI.fieldError('#description', 'Please describe the problem (at least 10 characters).'); valid = false; }
+          if (!valid) { $form.find('[aria-invalid="true"]').first().trigger('focus'); return; }
+
+          UI.setLoading('#submit-btn', true, 'Submitting...');
+          ServiceRequests.create(data)
+            .then(function () {
+              $form[0].reset();
+              UI.toast('Request submitted. You can track it below.');
+              load();
+              $('#my-heading')[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+              $('#my-heading').trigger('focus');
+            })
+            .catch(function (err) { $('#form-alert').text(err.message).removeClass('hidden'); })
+            .finally(function () { UI.setLoading('#submit-btn', false); });
+        });
+
+        $('#my-status').on('change', renderMine);
+
+        $('#my-list').on('click', '[data-withdraw]', function () {
+          const id = $(this).attr('data-withdraw');
+          UI.confirmDialog({
+            title: 'Withdraw this request?',
+            message: 'It will be removed and the city will not act on it.',
+            confirmText: 'Withdraw',
+          }).then(function (ok) {
+            if (!ok) return;
+            ServiceRequests.withdraw(id)
+              .then(function () { UI.toast('Request withdrawn.'); load(); })
+              .catch(function (err) { UI.toast(err.message, 'error'); });
+          });
+        });
+      }
+
+      function myItemHtml(r) {
+        return `
+          <li class="card p-5">
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">${esc(r.type)}</span>
+              ${ServiceRequests.statusBadge(r.status)}
+              <span class="text-slate-500">Submitted <time datetime="${esc(r.created_at)}">${UI.timeAgo(r.created_at)}</time></span>
+            </div>
+            <h3 class="mt-2 font-semibold text-lg">${esc(r.title)}</h3>
+            <p class="text-sm text-slate-600">📍 <span class="sr-only">Location: </span>${esc(r.location)}</p>
+            <p class="mt-2 text-slate-700 whitespace-pre-line">${esc(r.description)}</p>
+            ${r.admin_note ? `
+              <div class="mt-3 rounded-lg bg-indigo-50 p-3 text-sm">
+                <p class="font-semibold text-indigo-900">Response from the city</p>
+                <p class="text-indigo-900">${esc(r.admin_note)}</p>
+              </div>` : ''}
+            ${r.status === 'submitted' ? `
+              <div class="mt-3 flex justify-end">
+                <button type="button" data-withdraw="${esc(r.id)}" class="btn btn-secondary btn-sm !text-red-700" aria-label="Withdraw request: ${esc(r.title)}">Withdraw</button>
+              </div>` : ''}
+          </li>`;
+      }
+
+      function renderMine() {
+        const status = $('#my-status').val();
+        const list = requests.filter(function (r) { return !status || r.status === status; });
+        if (!requests.length) {
+          UI.showEmpty('#my-list', "You haven't made any requests yet. Use the form above to report a problem.");
+          return;
+        }
+        if (!list.length) { UI.showEmpty('#my-list', 'No requests with this status.'); return; }
+        $('#my-list').attr('aria-busy', 'false').html(list.map(myItemHtml).join(''));
+      }
+
+      /* ================= ADMINS ================= */
+      function initAdmin() {
+        $('#page-title').text('Service requests');
+        $('#page-intro').text('Review requests from residents and update their status.');
+        $('#admin-type').append(typeOptions);
+        $('#admin-status').append(statusOptions);
+
+        $('#admin-search').on('input', function () { clearTimeout(searchTimer); searchTimer = setTimeout(renderAdmin, 250); });
+        $('#admin-type, #admin-status').on('change', renderAdmin);
+
+        // ROLE GUARD (UI): this update form only exists for admins,
+        // and ServiceRequests.updateStatus() also rejects non-admins.
+        $('#admin-list').on('submit', '[data-update]', function (e) {
+          e.preventDefault();
+          const id = $(this).attr('data-update');
+          const status = $(this).find('select').val();
+          const note = $(this).find('textarea').val().trim();
+          const $btn = $(this).find('button[type="submit"]');
+          UI.setLoading($btn, true, 'Saving...');
+          ServiceRequests.updateStatus(id, status, note)
+            .then(function (updated) {
+              const index = requests.findIndex(function (r) { return r.id === id; });
+              requests[index] = updated;
+              UI.toast('Request updated to "' + ServiceRequests.STATUSES[status].label + '".');
+              renderAdmin();
+            })
+            .catch(function (err) { UI.setLoading($btn, false); UI.toast(err.message, 'error'); });
+        });
+      }
+
+      function renderAdminStats() {
+        $('#admin-stats').html(Object.keys(ServiceRequests.STATUSES).map(function (key) {
+          const count = requests.filter(function (r) { return r.status === key; }).length;
+          return `<div class="card p-4"><p class="text-sm text-slate-600">${ServiceRequests.STATUSES[key].label}</p><p class="mt-1 text-2xl font-bold">${count}</p></div>`;
+        }).join(''));
+      }
+
+      function adminItemHtml(r) {
+        const id = esc(r.id);
+        return `
+          <li class="card p-5">
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">${esc(r.type)}</span>
+              ${ServiceRequests.statusBadge(r.status)}
+              <span class="text-slate-500"><time datetime="${esc(r.created_at)}">${esc(UI.formatDate(r.created_at))}</time></span>
+            </div>
+            <h3 class="mt-2 font-semibold text-lg">${esc(r.title)}</h3>
+            <p class="text-sm text-slate-600">From <strong>${esc(r.user_name)}</strong> (${esc(r.user_email)}) · 📍 ${esc(r.location)}</p>
+            <p class="mt-2 text-slate-700 whitespace-pre-line">${esc(r.description)}</p>
+            ${r.handled_by ? `<p class="mt-2 text-xs text-slate-500">Last updated by ${esc(r.handled_by)}, ${UI.timeAgo(r.updated_at)}</p>` : ''}
+
+            <form data-update="${id}" class="mt-4 pt-4 border-t border-slate-100 grid gap-3 sm:grid-cols-[12rem_1fr_auto] items-end">
+              <div>
+                <label for="status-${id}" class="label">Status</label>
+                <select id="status-${id}" class="input">${statusOptions}</select>
+              </div>
+              <div>
+                <label for="note-${id}" class="label">Response to resident (optional)</label>
+                <textarea id="note-${id}" rows="1" maxlength="500" class="input">${esc(r.admin_note || '')}</textarea>
+              </div>
+              <button type="submit" class="btn btn-primary">Save</button>
+            </form>
+          </li>`;
+      }
+
+      function renderAdmin() {
+        renderAdminStats();
+        const term = $('#admin-search').val().trim().toLowerCase();
+        const type = $('#admin-type').val();
+        const status = $('#admin-status').val();
+        const list = requests.filter(function (r) {
+          const text = [r.title, r.location, r.user_name, r.user_email].join(' ').toLowerCase();
+          if (term && text.indexOf(term) === -1) return false;
+          if (type && r.type !== type) return false;
+          if (status && r.status !== status) return false;
+          return true;
+        });
+
+        if (!requests.length) {
+          $('#admin-summary').text('');
+          UI.showEmpty('#admin-list', 'No service requests yet.');
+          return;
+        }
+        if (!list.length) {
+          $('#admin-summary').text('0 requests found');
+          UI.showEmpty('#admin-list', 'No requests match your filters.');
+          return;
+        }
+        $('#admin-summary').text(list.length + ' request' + (list.length === 1 ? '' : 's'));
+        $('#admin-list').attr('aria-busy', 'false').html(list.map(adminItemHtml).join(''));
+        // Pre-select each request's current status
+        list.forEach(function (r) { $('#status-' + $.escapeSelector(r.id)).val(r.status); });
+      }
+
+      isAdmin ? initAdmin() : initUser();
+      load();
+    });
+  </script>
+</body>
+</html>
