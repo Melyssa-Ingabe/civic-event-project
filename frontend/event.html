@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Event · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <main id="main" class="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <a href="events.html" class="text-sm link">← All events</a>
+    <div id="event-content" class="mt-4"></div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/events.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user can view an event.
+      // Inside the page:
+      //   - Register / Cancel / Feedback form -> normal users only
+      //   - Edit / Delete / Attendees list    -> admins only
+      if (!Auth.requireAuth()) return;
+      Layout.init({ active: 'events' });
+
+      const esc = UI.escapeHtml;
+      const isAdmin = Auth.isAdmin();
+      const me = Auth.getUser();
+      const eventId = new URLSearchParams(window.location.search).get('id');
+      let event = null;
+      let feedbackList = null;  // every feedback for this event (null = not allowed to see it)
+      let myFeedback = null;    // the logged-in user's feedback for this event
+      let editingFeedback = false;
+
+      if (!eventId) {
+        UI.showEmpty('#event-content', 'No event was selected.', '<a href="events.html" class="btn btn-primary mt-4">Browse events</a>');
+        return;
+      }
+
+      /* ---------- Load ---------- */
+      function showSkeleton() {
+        $('#event-content').attr('aria-busy', 'true').html(`
+          <div class="animate-pulse" aria-hidden="true">
+            <div class="h-56 sm:h-80 bg-slate-200 rounded-2xl"></div>
+            <div class="mt-6 h-8 bg-slate-200 rounded w-2/3"></div>
+            <div class="mt-4 h-4 bg-slate-200 rounded w-full"></div>
+            <div class="mt-2 h-4 bg-slate-200 rounded w-5/6"></div>
+          </div>`);
+      }
+
+      function load() {
+        showSkeleton();
+        Promise.all([
+          Api.get('/events/' + encodeURIComponent(eventId)),
+          EventsService.loadMyRegistrations(true).catch(function () { return []; }),
+        ])
+          .then(function (results) {
+            event = results[0].data;
+            // ROLE GUARD (UI): normal users can't open unpublished events
+            if (!event || !EventsService.isVisible(event)) {
+              UI.showEmpty('#event-content', 'This event is not available.', '<a href="events.html" class="btn btn-primary mt-4">Browse events</a>');
+              return;
+            }
+            document.title = event.title + ' · CivicEvents';
+            renderEvent();
+            renderActions();
+            loadFeedback();
+            if (isAdmin) loadAttendees();
+          })
+          .catch(function (err) {
+            if (err.status === 404) {
+              UI.showEmpty('#event-content', "We couldn't find this event. It may have been deleted.", '<a href="events.html" class="btn btn-primary mt-4">Browse events</a>');
+            } else {
+              UI.showError('#event-content', err.message, load);
+            }
+          });
+      }
+
+      /* ---------- Render event ---------- */
+      function renderEvent() {
+        const st = EventsService.status(event);
+        const mapUrl = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(event.location || '');
+
+        $('#event-content').attr('aria-busy', 'false').html(`
+          <article>
+            <div class="rounded-2xl overflow-hidden">${EventsService.mediaBox(event, 'h-56 sm:h-80')}</div>
+
+            <div class="mt-6 grid gap-8 lg:grid-cols-3">
+              <div class="lg:col-span-2 space-y-8">
+                <header>
+                  <div class="flex flex-wrap gap-2">
+                    ${EventsService.statusBadge(st)}
+                    ${isAdmin && event.published === false ? '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-white">Draft</span>' : ''}
+                  </div>
+                  <h1 class="mt-2 text-3xl font-bold">${esc(event.title)}</h1>
+                </header>
+
+                <section aria-labelledby="about-heading">
+                  <h2 id="about-heading" class="text-xl font-semibold">About this event</h2>
+                  <p class="mt-2 text-slate-700 whitespace-pre-line leading-relaxed">${esc(event.description || 'No description provided.')}</p>
+                </section>
+
+                <section aria-labelledby="feedback-heading" class="card p-6">
+                  <h2 id="feedback-heading" class="text-xl font-semibold">Ratings &amp; feedback</h2>
+                  <div id="rating-summary" class="mt-3"></div>
+                  <div id="my-feedback" class="mt-6"></div>
+                  <ul id="feedback-list" class="mt-6 space-y-4"></ul>
+                </section>
+
+                ${isAdmin ? `
+                <section aria-labelledby="attendees-heading" class="card p-6">
+                  <h2 id="attendees-heading" class="text-xl font-semibold">Registered attendees</h2>
+                  <div id="attendees" class="mt-4"></div>
+                </section>` : ''}
+              </div>
+
+              <aside class="lg:col-span-1" aria-label="Event details">
+                <div class="card p-5 space-y-5 lg:sticky lg:top-24">
+                  <div>
+                    <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide">When</h2>
+                    <p class="mt-1 text-slate-900"><time datetime="${esc(event.starts_at)}">${esc(UI.formatDate(event.starts_at))}</time></p>
+                    ${event.ends_at ? `<p class="text-slate-600">until <time datetime="${esc(event.ends_at)}">${esc(UI.formatDate(event.ends_at))}</time></p>` : ''}
+                  </div>
+                  <div>
+                    <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide">Where</h2>
+                    <p class="mt-1 text-slate-900">${esc(event.location || 'To be announced')}</p>
+                    ${event.location ? `<a href="${mapUrl}" target="_blank" rel="noopener" class="link text-sm">Open in Google Maps<span class="sr-only"> (opens in a new tab)</span></a>` : ''}
+                  </div>
+                  <div id="event-actions" class="pt-4 border-t border-slate-100 space-y-3"></div>
+                </div>
+              </aside>
+            </div>
+          </article>`);
+      }
+
+      function renderActions() {
+        const $actions = $('#event-actions');
+
+        // ROLE GUARD (UI): admins manage the event
+        if (isAdmin) {
+          $actions.html(`
+            <a href="event-form.html?id=${encodeURIComponent(event.id)}" class="btn btn-primary w-full">Edit event</a>
+            <button type="button" id="delete-event" class="btn btn-danger w-full">Delete event</button>`);
+          return;
+        }
+
+        // Normal users register / cancel
+        const st = EventsService.status(event);
+        if (EventsService.isRegistered(event.id)) {
+          $actions.html(`
+            <p class="flex items-center gap-2 font-semibold text-green-700"><span aria-hidden="true">✓</span> You're registered</p>
+            ${st !== 'past' ? '<button type="button" id="cancel-btn" class="btn btn-secondary w-full">Cancel registration</button>' : ''}
+            <a href="my-registrations.html" class="link text-sm inline-block">View my registrations</a>`);
+        } else if (st === 'past') {
+          $actions.html('<p class="text-slate-600">This event has ended. Registration is closed.</p>');
+        } else {
+          $actions.html(`
+            <button type="button" id="register-btn" class="btn btn-primary w-full">Register for this event</button>
+            <p class="text-sm text-slate-500">Free. You can cancel any time before it starts.</p>`);
+        }
+      }
+
+      /* ---------- Feedback ---------- */
+      function stars(rating) {
+        const r = Math.round(Number(rating) || 0);
+        return `<span class="text-amber-500 tracking-wider" aria-hidden="true">${'★'.repeat(r)}<span class="text-slate-300">${'★'.repeat(5 - r)}</span></span>` +
+               `<span class="sr-only">${Number(rating).toFixed(1)} out of 5 stars</span>`;
+      }
+
+      function loadFeedback() {
+        $('#rating-summary').html('<p class="text-slate-500">Loading feedback…</p>');
+
+        // The full feedback list endpoint is admin-only in the backend (authorize(['admin'])).
+        // A normal user gets 403 here, so we fall back to showing only their own feedback.
+        const allRequest = Api.get('/event-feedback/event/' + encodeURIComponent(event.id))
+          .then(function (res) { return Api.toList(res); })
+          .catch(function (err) { if (err.status === 403) return null; throw err; });
+
+        const mineRequest = isAdmin
+          ? Promise.resolve([])
+          : Api.get('/event-feedback/my-feedback').then(function (res) {
+              return Api.toList(res).filter(function (f) { return f.event_id === event.id; });
+            });
+
+        Promise.all([allRequest, mineRequest])
+          .then(function (results) {
+            feedbackList = results[0];
+            myFeedback = results[1][0] || null;
+            if (!myFeedback && feedbackList && !isAdmin) {
+              myFeedback = feedbackList.find(function (f) { return f.user_id === me.id; }) || null;
+            }
+            renderFeedback();
+          })
+          .catch(function (err) { UI.showError('#rating-summary', err.message, loadFeedback); });
+      }
+
+      function feedbackItemHtml(f) {
+        const name = f.full_name || f.user_name || f.name || 'Attendee';
+        return `
+          <li class="border-t border-slate-100 pt-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="font-semibold text-slate-900">${esc(name)}</p>
+              <time class="text-xs text-slate-500" datetime="${esc(f.created_at)}">${UI.timeAgo(f.created_at)}</time>
+            </div>
+            <p class="mt-1">${stars(f.rating)}</p>
+            ${f.comment ? `<p class="mt-1 text-slate-700">${esc(f.comment)}</p>` : ''}
+          </li>`;
+      }
+
+      function feedbackFormHtml(existing) {
+        const current = existing ? Number(existing.rating) : 0;
+        const labels = ['Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
+        const options = [1, 2, 3, 4, 5].map(function (n) {
+          return `
+            <label class="cursor-pointer">
+              <input type="radio" name="rating" value="${n}" class="sr-only peer" ${n === current ? 'checked' : ''} />
+              <span class="inline-flex flex-col items-center min-w-[4.5rem] px-3 py-2 rounded-lg border border-slate-300 text-slate-700 hover:border-amber-400
+                           peer-checked:bg-amber-500 peer-checked:border-amber-500 peer-checked:text-white
+                           peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-600 peer-focus-visible:ring-offset-2">
+                <span aria-hidden="true" class="font-semibold">${n} ★</span>
+                <span aria-hidden="true" class="text-xs">${labels[n - 1]}</span>
+                <span class="sr-only">${n} out of 5, ${labels[n - 1]}</span>
+              </span>
+            </label>`;
+        }).join('');
+
+        return `
+          <form id="feedback-form" class="space-y-4" novalidate>
+            <h3 class="font-semibold text-lg">${existing ? 'Edit your feedback' : 'Leave feedback'}</h3>
+            <fieldset>
+              <legend class="label">Your rating <span class="text-red-700" aria-hidden="true">*</span></legend>
+              <div class="flex flex-wrap gap-2">${options}</div>
+              <p id="rating-error" class="hidden mt-1 text-sm text-red-700" role="alert"></p>
+            </fieldset>
+            <div>
+              <label for="comment" class="label">Comment (optional)</label>
+              <textarea id="comment" rows="3" maxlength="500" class="input" aria-describedby="comment-count">${esc(existing ? existing.comment || '' : '')}</textarea>
+              <p id="comment-count" class="mt-1 text-xs text-slate-500 text-right">0/500</p>
+            </div>
+            <div class="flex justify-end gap-3">
+              ${existing ? '<button type="button" id="cancel-edit" class="btn btn-secondary">Cancel</button>' : ''}
+              <button type="submit" id="feedback-btn" class="btn btn-primary">${existing ? 'Update feedback' : 'Submit feedback'}</button>
+            </div>
+          </form>`;
+      }
+
+      function renderFeedback() {
+        // Average + list (when the API lets us see all feedback)
+        if (feedbackList) {
+          if (feedbackList.length) {
+            const avg = feedbackList.reduce(function (sum, f) { return sum + Number(f.rating || 0); }, 0) / feedbackList.length;
+            $('#rating-summary').html(`
+              <div class="flex items-center gap-4">
+                <p class="text-4xl font-bold">${avg.toFixed(1)}</p>
+                <div>
+                  <p class="text-xl">${stars(avg)}</p>
+                  <p class="text-sm text-slate-600">Average from ${feedbackList.length} review${feedbackList.length === 1 ? '' : 's'}</p>
+                </div>
+              </div>`);
+          } else {
+            $('#rating-summary').html('<p class="text-slate-600">No ratings yet.</p>');
+          }
+          $('#feedback-list').html(feedbackList.map(feedbackItemHtml).join(''));
+        } else {
+          $('#rating-summary').html('<p class="text-sm text-slate-600">The full ratings summary is shared with event organisers. Your own rating appears below.</p>');
+          $('#feedback-list').empty();
+        }
+
+        // ROLE GUARD (UI): only normal users leave feedback
+        if (isAdmin) { $('#my-feedback').empty(); return; }
+
+        if (myFeedback && !editingFeedback) {
+          // One feedback per event: show it with an Edit button instead of a second form
+          $('#my-feedback').html(`
+            <div class="rounded-xl bg-indigo-50 p-4">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="font-semibold">Your feedback</h3>
+                <button type="button" id="edit-feedback" class="link text-sm">Edit</button>
+              </div>
+              <p class="mt-1">${stars(myFeedback.rating)}</p>
+              ${myFeedback.comment ? `<p class="mt-2 text-slate-700">${esc(myFeedback.comment)}</p>` : ''}
+            </div>`);
+        } else {
+          $('#my-feedback').html(feedbackFormHtml(editingFeedback ? myFeedback : null));
+          $('#comment-count').text($('#comment').val().length + '/500');
+        }
+      }
+
+      /* ---------- Attendees (admin) ---------- */
+      function loadAttendees() {
+        UI.showSkeleton('#attendees', 3, 'row');
+        Api.get('/event-registrations/event/' + encodeURIComponent(event.id) + '/attendees')
+          .then(function (res) {
+            const list = Api.toList(res).filter(function (a) { return (a.status || 'registered') !== 'cancelled'; });
+            $('#attendees-heading').text('Registered attendees (' + list.length + ')');
+            if (!list.length) { UI.showEmpty('#attendees', 'No one has registered yet.'); return; }
+
+            const rows = list.map(function (a) {
+              const name = a.full_name || a.name || a.user_name || (a.user && a.user.full_name) || 'User ' + String(a.user_id || '').slice(0, 8);
+              const email = a.email || (a.user && a.user.email) || '—';
+              return `<tr>
+                  <td class="py-2 pr-4 font-medium text-slate-900">${esc(name)}</td>
+                  <td class="py-2 pr-4 text-slate-600">${esc(email)}</td>
+                  <td class="py-2 text-slate-600">${a.created_at ? esc(UI.formatDate(a.created_at, false)) : '—'}</td>
+                </tr>`;
+            }).join('');
+
+            $('#attendees').attr('aria-busy', 'false').html(`
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left">
+                  <caption class="sr-only">People registered for this event</caption>
+                  <thead class="border-b border-slate-200 text-slate-600">
+                    <tr><th scope="col" class="py-2 pr-4">Name</th><th scope="col" class="py-2 pr-4">Email</th><th scope="col" class="py-2">Registered on</th></tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">${rows}</tbody>
+                </table>
+              </div>`);
+          })
+          .catch(function (err) { UI.showError('#attendees', err.message, loadAttendees); });
+      }
+
+      /* ---------- Actions ---------- */
+      const $content = $('#event-content');
+
+      $content.on('click', '#register-btn', function () {
+        const $btn = $(this);
+        UI.setLoading($btn, true, 'Registering...');
+        EventsService.register(event.id)
+          .then(function () { UI.toast("You're registered! See you there."); renderActions(); })
+          .catch(function (err) {
+            if (err.status === 409) { UI.toast("You're already registered for this event.", 'info'); renderActions(); }
+            else { UI.setLoading($btn, false); UI.toast(err.message, 'error'); }
+          });
+      });
+
+      $content.on('click', '#cancel-btn', function () {
+        const $btn = $(this);
+        UI.confirmDialog({
+          title: 'Cancel your registration?',
+          message: 'You will lose your spot for "' + event.title + '". You can register again later if spaces remain.',
+          confirmText: 'Cancel registration',
+        }).then(function (ok) {
+          if (!ok) return;
+          UI.setLoading($btn, true, 'Cancelling...');
+          EventsService.cancel(event.id)
+            .then(function () { UI.toast('Your registration was cancelled.'); renderActions(); })
+            .catch(function (err) { UI.setLoading($btn, false); UI.toast(err.message, 'error'); });
+        });
+      });
+
+      $content.on('click', '#delete-event', function () {
+        EventsService.deleteEvent(event).then(function (deleted) {
+          if (deleted) {
+            UI.setFlash('Event deleted.', 'success');
+            window.location.href = 'events.html';
+          }
+        });
+      });
+
+      $content.on('click', '#edit-feedback', function () {
+        editingFeedback = true;
+        renderFeedback();
+        $('input[name="rating"]:checked').trigger('focus');
+      });
+
+      $content.on('click', '#cancel-edit', function () {
+        editingFeedback = false;
+        renderFeedback();
+      });
+
+      $content.on('input', '#comment', function () {
+        $('#comment-count').text($(this).val().length + '/500');
+      });
+
+      $content.on('submit', '#feedback-form', function (e) {
+        e.preventDefault();
+        const rating = Number($('input[name="rating"]:checked').val());
+        const comment = $('#comment').val().trim();
+
+        if (!rating) {
+          $('#rating-error').text('Please choose a rating from 1 to 5.').removeClass('hidden');
+          $('input[name="rating"]').first().trigger('focus');
+          return;
+        }
+
+        const $btn = $('#feedback-btn');
+        UI.setLoading($btn, true, 'Saving...');
+        const isUpdate = !!(editingFeedback && myFeedback);
+
+        const request = isUpdate
+          ? Api.put('/event-feedback/' + encodeURIComponent(myFeedback.id), { rating: rating, comment: comment })
+          : Api.post('/event-feedback', { event_id: event.id, rating: rating, comment: comment });
+
+        request
+          .then(function () {
+            UI.toast(isUpdate ? 'Your feedback was updated.' : 'Thanks for your feedback!');
+            editingFeedback = false;
+            loadFeedback();
+          })
+          .catch(function (err) {
+            UI.setLoading($btn, false);
+            // The database allows only ONE feedback per user per event (UNIQUE constraint)
+            if (!isUpdate && err.status >= 500) {
+              UI.toast("You've already left feedback for this event.", 'info');
+              loadFeedback();
+            } else {
+              UI.toast(err.message, 'error');
+            }
+          });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>

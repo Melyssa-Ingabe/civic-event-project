@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notification · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <main id="main" class="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <a href="notifications.html" class="text-sm link">← All notifications</a>
+    <div id="notif-content" class="mt-4"></div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user can read a notification.
+      // ROLE GUARD (UI): only admins see the Delete button.
+      if (!Auth.requireAuth()) return;
+      Layout.init({});
+
+      const esc = UI.escapeHtml;
+      const id = new URLSearchParams(window.location.search).get('id');
+
+      // Uses metadata (e.g. { event_id }) to link to the related page
+      function relatedLink(n) {
+        let meta = n.metadata || {};
+        if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch (e) { meta = {}; } }
+        if (meta.event_id) return { href: 'event.html?id=' + encodeURIComponent(meta.event_id), label: 'View event' };
+        if (meta.announcement_id) return { href: 'announcement.html?id=' + encodeURIComponent(meta.announcement_id), label: 'Listen to announcement' };
+        if (meta.promo_id) return { href: 'promo.html?id=' + encodeURIComponent(meta.promo_id), label: 'Watch promo' };
+        if (n.type === 'announcement') return { href: 'announcements.html', label: 'See announcements' };
+        if (n.type === 'promo') return { href: 'promos.html', label: 'See promos' };
+        return null;
+      }
+
+      function load() {
+        if (!id) { UI.showEmpty('#notif-content', 'No notification selected.'); return; }
+        $('#notif-content').html('<div class="card p-6 animate-pulse" aria-hidden="true"><div class="h-6 bg-slate-200 rounded w-1/2"></div><div class="mt-4 h-4 bg-slate-200 rounded"></div><div class="mt-2 h-4 bg-slate-200 rounded w-3/4"></div></div>');
+
+        Api.get('/notifications/' + encodeURIComponent(id))
+          .then(function (res) {
+            const n = res.data;
+            Layout.markRead(n.id); // opening it marks it as read
+            const link = relatedLink(n);
+            document.title = n.title + ' · CivicEvents';
+
+            $('#notif-content').html(`
+              <article class="card p-6 sm:p-8">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                  <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold capitalize">${esc(n.type)}</span>
+                  ${n.recipient_id ? '<span class="px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 font-semibold">Sent to you</span>' : '<span class="px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 font-semibold">Broadcast to everyone</span>'}
+                </div>
+                <h1 class="mt-3 text-2xl sm:text-3xl font-bold">${esc(n.title)}</h1>
+                <p class="mt-1 text-sm text-slate-500"><time datetime="${esc(n.created_at)}">${esc(UI.formatDate(n.created_at))}</time></p>
+                <p class="mt-6 text-slate-800 leading-relaxed whitespace-pre-line">${esc(n.message)}</p>
+                <div class="mt-8 flex flex-wrap gap-3">
+                  ${link ? `<a href="${link.href}" class="btn btn-primary">${link.label}</a>` : ''}
+                  <a href="notifications.html" class="btn btn-secondary">Back to notifications</a>
+                  ${Auth.isAdmin() ? '<button type="button" id="delete-btn" class="btn btn-danger">Delete</button>' : ''}
+                </div>
+              </article>`);
+          })
+          .catch(function (err) {
+            if (err.status === 404) UI.showEmpty('#notif-content', 'This notification no longer exists.', '<a href="notifications.html" class="btn btn-primary mt-4">Back to notifications</a>');
+            else UI.showError('#notif-content', err.message, load);
+          });
+      }
+
+      $('#notif-content').on('click', '#delete-btn', function () {
+        Layout.deleteNotification(id).then(function (deleted) {
+          if (deleted) window.location.href = 'notifications.html';
+        });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>

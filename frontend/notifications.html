@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notifications · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <div class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:flex lg:gap-8">
+    <div id="admin-sidebar" data-admin-only></div>
+
+    <main id="main" class="flex-1 min-w-0 max-w-4xl">
+      <div class="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 class="text-2xl sm:text-3xl font-bold">Notifications</h1>
+          <p class="mt-1 text-slate-600">Updates about events, announcements and promos.</p>
+        </div>
+        <button type="button" id="mark-all" class="btn btn-secondary btn-sm">Mark all as read</button>
+      </div>
+
+      <!-- Filters -->
+      <div class="mt-6 flex flex-wrap items-end gap-4">
+        <div class="inline-flex rounded-lg border border-slate-300 bg-white p-1" role="group" aria-label="Show notifications">
+          <button type="button" data-show="all" aria-pressed="true" class="show-btn px-4 py-2 rounded-md text-sm font-semibold">All</button>
+          <button type="button" data-show="unread" aria-pressed="false" class="show-btn px-4 py-2 rounded-md text-sm font-semibold">Unread</button>
+        </div>
+        <div>
+          <label for="type-filter" class="label">Type</label>
+          <select id="type-filter" class="input py-2"><option value="">All types</option></select>
+        </div>
+      </div>
+
+      <!-- ADMIN ONLY: delete form (removed for normal users by Auth.applyRoleUI) -->
+      <form id="bulk-form" data-admin-only class="mt-4 card p-3 flex flex-wrap items-center justify-between gap-3" aria-label="Delete notifications">
+        <label class="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <input type="checkbox" id="select-all" class="h-4 w-4 accent-indigo-700" /> Select all shown
+        </label>
+        <div class="flex items-center gap-3">
+          <span id="selected-count" class="text-sm text-slate-600" aria-live="polite">0 selected</span>
+          <button type="submit" id="bulk-delete" class="btn btn-danger btn-sm" disabled>Delete selected</button>
+        </div>
+      </form>
+
+      <p id="summary" class="mt-4 text-sm text-slate-600" aria-live="polite"></p>
+      <ul id="notif-page-list" class="mt-3 space-y-3"></ul>
+    </main>
+  </div>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user sees their notifications (targeted + broadcast).
+      // ROLE GUARD (UI): the delete form, checkboxes and delete buttons are admin-only.
+      // The backend also rejects DELETE /api/notifications/:id from non-admins (403).
+      if (!Auth.requireAuth()) return;
+      Layout.init({ adminSidebar: 'notifications' });
+
+      const esc = UI.escapeHtml;
+      const isAdmin = Auth.isAdmin();
+      let all = [];
+      let show = 'all';
+
+      function load() {
+        UI.showSkeleton('#notif-page-list', 4, 'row');
+        Layout.loadNotifications().then(function (list) {
+          all = list;
+          fillTypes();
+          render();
+        });
+      }
+
+      function fillTypes() {
+        const selected = $('#type-filter').val();
+        const types = [];
+        all.forEach(function (n) { if (n.type && types.indexOf(n.type) === -1) types.push(n.type); });
+        $('#type-filter').html('<option value="">All types</option>' + types.map(function (t) {
+          return '<option value="' + esc(t) + '">' + esc(t.charAt(0).toUpperCase() + t.slice(1)) + '</option>';
+        }).join('')).val(selected);
+      }
+
+      function itemHtml(n) {
+        const unread = !Layout.isRead(n);
+        const checkbox = isAdmin
+          ? `<input type="checkbox" class="notif-check mt-1 h-4 w-4 accent-indigo-700" value="${esc(n.id)}" aria-label="Select notification: ${esc(n.title)}" />`
+          : '';
+        const deleteBtn = isAdmin
+          ? `<button type="button" data-delete="${esc(n.id)}" class="btn btn-secondary btn-sm !text-red-700 self-start" aria-label="Delete notification: ${esc(n.title)}">Delete</button>`
+          : '';
+        return `
+          <li class="card p-4 flex gap-3 ${unread ? 'border-l-4 border-l-indigo-600' : ''}">
+            ${checkbox}
+            <div class="flex-1 min-w-0">
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold capitalize">${esc(n.type)}</span>
+                ${n.recipient_id ? '' : '<span class="px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 font-semibold">Broadcast</span>'}
+                ${unread ? '<span class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-semibold">New</span>' : ''}
+                <time class="text-slate-500" datetime="${esc(n.created_at)}">${UI.timeAgo(n.created_at)}</time>
+              </div>
+              <h2 class="mt-1 font-semibold">
+                <a href="notification.html?id=${encodeURIComponent(n.id)}" data-read="${esc(n.id)}" class="hover:text-indigo-700 focus:outline-none focus-visible:underline">${esc(n.title)}</a>
+              </h2>
+              <p class="text-sm text-slate-600 line-clamp-2">${esc(n.message)}</p>
+            </div>
+            ${deleteBtn}
+          </li>`;
+      }
+
+      function visible() {
+        const type = $('#type-filter').val();
+        return all.filter(function (n) {
+          if (show === 'unread' && Layout.isRead(n)) return false;
+          if (type && n.type !== type) return false;
+          return true;
+        });
+      }
+
+      function render() {
+        $('.show-btn').each(function () {
+          const active = $(this).data('show') === show;
+          $(this).attr('aria-pressed', String(active))
+            .toggleClass('bg-indigo-700 text-white', active)
+            .toggleClass('text-slate-700 hover:bg-slate-100', !active);
+        });
+
+        const list = visible();
+        $('#select-all').prop('checked', false);
+        updateSelection();
+
+        if (!list.length) {
+          $('#summary').text('');
+          UI.showEmpty('#notif-page-list', show === 'unread' ? "You're all caught up!" : 'No notifications yet.');
+          return;
+        }
+        const unreadCount = all.filter(function (n) { return !Layout.isRead(n); }).length;
+        $('#summary').text(list.length + ' shown · ' + unreadCount + ' unread');
+        $('#notif-page-list').attr('aria-busy', 'false').html(list.map(itemHtml).join(''));
+      }
+
+      function updateSelection() {
+        const count = $('.notif-check:checked').length;
+        $('#selected-count').text(count + ' selected');
+        $('#bulk-delete').prop('disabled', count === 0);
+      }
+
+      /* ---------- Events ---------- */
+      $('.show-btn').on('click', function () { show = $(this).data('show'); render(); });
+      $('#type-filter').on('change', render);
+
+      $('#mark-all').on('click', function () {
+        all.forEach(function (n) { Layout.markRead(n.id); });
+        render();
+        UI.toast('All notifications marked as read.');
+      });
+
+      $('#notif-page-list').on('click', '[data-read]', function () {
+        Layout.markRead($(this).attr('data-read'));
+      });
+
+      $('#notif-page-list').on('change', '.notif-check', updateSelection);
+      $('#select-all').on('change', function () {
+        $('.notif-check').prop('checked', $(this).is(':checked'));
+        updateSelection();
+      });
+
+      // Single delete (admin)
+      $('#notif-page-list').on('click', '[data-delete]', function () {
+        Layout.deleteNotification($(this).attr('data-delete')).then(function (deleted) {
+          if (deleted) { all = Layout.getNotifications(); fillTypes(); render(); }
+        });
+      });
+
+      // Bulk delete form (admin)
+      $('#bulk-form').on('submit', function (e) {
+        e.preventDefault();
+        const ids = $('.notif-check:checked').map(function () { return $(this).val(); }).get();
+        if (!ids.length) return;
+
+        UI.confirmDialog({
+          title: 'Delete ' + ids.length + ' notification' + (ids.length === 1 ? '' : 's') + '?',
+          message: 'They will be removed for everyone. This cannot be undone.',
+          confirmText: 'Delete',
+        }).then(function (ok) {
+          if (!ok) return;
+          UI.setLoading('#bulk-delete', true, 'Deleting...');
+          Promise.allSettled(ids.map(function (id) { return Api.del('/notifications/' + encodeURIComponent(id)); }))
+            .then(function (results) {
+              const failed = results.filter(function (r) { return r.status === 'rejected'; }).length;
+              const done = ids.length - failed;
+              if (done) UI.toast(done + ' notification' + (done === 1 ? '' : 's') + ' deleted.');
+              if (failed) UI.toast(failed + ' could not be deleted. Please try again.', 'error');
+              return Layout.loadNotifications();
+            })
+            .then(function (list) { all = list; fillTypes(); render(); })
+            .finally(function () { UI.setLoading('#bulk-delete', false); updateSelection(); });
+        });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>

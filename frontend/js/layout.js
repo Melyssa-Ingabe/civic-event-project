@@ -251,7 +251,7 @@ const Layout = (function () {
     const links = [
       { key: 'dashboard', label: 'Overview', href: 'dashboard.html' },
       { key: 'users', label: 'Users', href: 'admin-users.html' },
-      { key: 'notifications', label: 'Notifications', href: 'admin-notifications.html' },
+      { key: 'notifications', label: 'Notifications', href: 'notifications.html' },
       { key: 'event-form', label: '+ New event', href: 'event-form.html' },
       { key: 'announcement-form', label: '+ New announcement', href: 'announcement-form.html' },
       { key: 'promo-form', label: '+ New promo', href: 'promo-form.html' },
