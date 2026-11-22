@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New announcement · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <div class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:flex lg:gap-8">
+    <div id="admin-sidebar"></div>
+
+    <main id="main" class="flex-1 min-w-0 max-w-3xl">
+      <a href="announcements.html" class="text-sm link">← Back to announcements</a>
+      <h1 id="page-title" class="mt-2 text-2xl sm:text-3xl font-bold">New announcement</h1>
+      <p class="mt-1 text-slate-600">Users get an in-app notification when a new announcement is created.</p>
+
+      <p id="loading-note" class="hidden mt-4 text-slate-600" role="status">Loading announcement…</p>
+      <div id="form-alert" class="hidden mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert"></div>
+
+      <form id="announcement-form" class="mt-6 card p-6 space-y-6" novalidate>
+        <div>
+          <label for="title" class="label">Title <span class="text-red-700" aria-hidden="true">*</span></label>
+          <input id="title" type="text" required maxlength="200" class="input" />
+        </div>
+
+        <div>
+          <label for="audio" class="label"><span id="audio-label-text">Audio file</span> <span id="audio-required" class="text-red-700" aria-hidden="true">*</span></label>
+          <input id="audio" type="file" aria-describedby="audio-hint"
+                 class="block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-800 file:font-semibold hover:file:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 rounded-lg" />
+          <p id="audio-hint" class="mt-1 text-sm text-slate-500"></p>
+
+          <!-- Preview: listen before uploading -->
+          <div id="preview" class="hidden mt-4 rounded-lg bg-slate-50 border border-slate-200 p-4">
+            <p id="preview-label" class="text-sm font-medium text-slate-700 mb-2"></p>
+            <audio id="preview-audio" controls class="w-full">Your browser can't preview this audio.</audio>
+          </div>
+        </div>
+
+        <div class="flex items-start gap-3 rounded-lg bg-slate-50 p-4 border border-slate-200">
+          <input id="published" type="checkbox" checked class="mt-1 h-4 w-4 accent-indigo-700" aria-describedby="published-hint" />
+          <div>
+            <label for="published" class="text-sm font-medium text-slate-700">Published</label>
+            <p id="published-hint" class="text-sm text-slate-600">Untick to save it as a draft that only admins can see.</p>
+          </div>
+        </div>
+
+        <div id="upload-progress" class="hidden">
+          <div class="flex justify-between text-sm text-slate-700"><span>Uploading audio…</span><span id="progress-text">0%</span></div>
+          <div class="mt-1 h-2 bg-slate-200 rounded-full overflow-hidden" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="progress-bar" class="h-full w-0 bg-indigo-600 transition-all"></div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap justify-end gap-3 pt-2 border-t border-slate-100">
+          <a id="cancel-link" href="announcements.html" class="btn btn-secondary">Cancel</a>
+          <button id="submit-btn" type="submit" class="btn btn-primary">Create announcement</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/media.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 2: only admins can create or edit announcements.
+      // Backend: authorize(['admin']) on POST/PUT/PATCH/DELETE /api/announcements.
+      if (!Auth.requireAdmin()) return;
+      Layout.init({ active: 'admin', adminSidebar: 'announcement-form' });
+
+      const id = new URLSearchParams(window.location.search).get('id');
+      const isEdit = !!id;
+      const $form = $('#announcement-form');
+      const $alert = $('#form-alert');
+      const limits = CONFIG.UPLOAD_LIMITS.audio;
+      let original = null;     // the announcement being edited
+      let objectUrl = null;
+
+      $('#audio').attr('accept', limits.extensions.map(function (e) { return '.' + e; }).join(','));
+      $('#audio-hint').text('MP3, WAV, M4A or OGG, up to ' + limits.maxMB + ' MB.');
+
+      function showPreview(src, label) {
+        $('#preview-audio').attr('src', src);
+        $('#preview-label').text(label);
+        $('#preview').removeClass('hidden');
+      }
+
+      /* ---------- Edit mode ---------- */
+      if (isEdit) {
+        document.title = 'Edit announcement · CivicEvents';
+        $('#page-title').text('Edit announcement');
+        $('#submit-btn').text('Save changes');
+        $('#audio-label-text').text('Replace audio (optional)');
+        $('#audio-required').addClass('hidden');
+        $('#cancel-link').attr('href', 'announcement.html?id=' + encodeURIComponent(id));
+        $form.find('input, button').prop('disabled', true);
+        $('#loading-note').removeClass('hidden');
+
+        Api.get('/announcements/' + encodeURIComponent(id))
+          .then(function (res) {
+            original = res.data;
+            $('#title').val(original.title);
+            $('#published').prop('checked', original.published !== false);
+            if (original.audio_url) showPreview(mediaUrl(original.audio_url), 'Current audio');
+            $form.find('input, button').prop('disabled', false);
+          })
+          .catch(function (err) {
+            $alert.html(UI.escapeHtml(err.message) + ' <a href="announcements.html" class="link">Back to announcements</a>').removeClass('hidden');
+          })
+          .finally(function () { $('#loading-note').addClass('hidden'); });
+      }
+
+      /* ---------- Choose file: validate size/type BEFORE uploading ---------- */
+      $('#audio').on('change', function () {
+        UI.clearErrors($(this).parent());
+        const file = this.files[0];
+        if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
+        if (!file) {
+          if (original && original.audio_url) showPreview(mediaUrl(original.audio_url), 'Current audio');
+          else $('#preview').addClass('hidden');
+          return;
+        }
+        const error = UI.validateFile(file, 'audio');
+        if (error) { UI.fieldError('#audio', error); this.value = ''; $('#preview').addClass('hidden'); return; }
+        objectUrl = URL.createObjectURL(file);
+        showPreview(objectUrl, 'Preview: ' + file.name + ' (' + (file.size / 1024 / 1024).toFixed(1) + ' MB)');
+      });
+
+      /* ---------- Submit ---------- */
+      $form.on('submit', function (e) {
+        e.preventDefault();
+        UI.clearErrors($form);
+        $alert.addClass('hidden').text('');
+
+        const title = $('#title').val().trim();
+        const file = $('#audio')[0].files[0];
+        const published = $('#published').is(':checked');
+
+        let valid = true;
+        if (!title) { UI.fieldError('#title', 'Please enter a title.'); valid = false; }
+        if (!isEdit && !file) { UI.fieldError('#audio', 'Please choose an audio file.'); valid = false; }
+        if (file) {
+          const fileError = UI.validateFile(file, 'audio');
+          if (fileError) { UI.fieldError('#audio', fileError); valid = false; }
+        }
+        if (!valid) { $form.find('[aria-invalid="true"]').first().trigger('focus'); return; }
+
+        // multipart/form-data with the file under the key "audio"
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('published', String(published));
+        if (file) formData.append('audio', file);
+
+        UI.setLoading('#submit-btn', true, isEdit ? 'Saving...' : 'Uploading...');
+        if (file) $('#upload-progress').removeClass('hidden');
+
+        const options = {
+          onProgress: function (pct) {
+            $('#progress-bar').css('width', pct + '%');
+            $('#progress-text').text(pct + '%');
+            $('#upload-progress [role="progressbar"]').attr('aria-valuenow', pct);
+          },
+        };
+
+        const request = isEdit
+          ? Api.put('/announcements/' + encodeURIComponent(id), formData, options)
+          : Api.post('/announcements', formData, options);
+
+        request
+          .then(function (res) {
+            const saved = res.data || {};
+            const savedId = saved.id || id;
+            // Make sure the published state matches the toggle (uses the publish/unpublish endpoints)
+            const serverPublished = saved.published !== undefined ? saved.published !== false
+              : (original ? original.published !== false : true);
+            if (serverPublished !== published) {
+              return MediaService.setPublished('announcements', savedId, published).then(function () { return savedId; });
+            }
+            return savedId;
+          })
+          .then(function (savedId) {
+            Api.invalidate('/announcements');
+            UI.setFlash(isEdit ? 'Announcement updated.' : 'Announcement created. Users have been notified.', 'success');
+            window.location.href = 'announcement.html?id=' + encodeURIComponent(savedId);
+          })
+          .catch(function (err) {
+            UI.setLoading('#submit-btn', false);
+            $('#upload-progress').addClass('hidden');
+            $alert.text(err.message).removeClass('hidden');
+            $alert[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+      });
+    });
+  </script>
+</body>
+</html>

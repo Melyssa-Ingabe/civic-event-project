@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Announcement · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <main id="main" class="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <a href="announcements.html" class="text-sm link">← All announcements</a>
+    <div id="content" class="mt-4"></div>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/media.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user can listen to a published announcement.
+      // ROLE GUARD (UI): Edit / Publish / Delete are admin-only.
+      if (!Auth.requireAuth()) return;
+      Layout.init({ active: 'announcements' });
+
+      const esc = UI.escapeHtml;
+      const isAdmin = Auth.isAdmin();
+      const id = new URLSearchParams(window.location.search).get('id');
+      let item = null;
+
+      function load() {
+        if (!id) { UI.showEmpty('#content', 'No announcement selected.'); return; }
+        $('#content').html('<div class="animate-pulse space-y-4" aria-hidden="true"><div class="h-8 bg-slate-200 rounded w-2/3"></div><div class="h-32 bg-slate-200 rounded-xl"></div></div>');
+
+        Api.get('/announcements/' + encodeURIComponent(id))
+          .then(function (res) {
+            item = res.data;
+            // ROLE GUARD (UI): unpublished announcements are hidden from normal users
+            if (!item || !MediaService.isVisible(item)) {
+              UI.showEmpty('#content', 'This announcement is not available.', '<a href="announcements.html" class="btn btn-primary mt-4">Back to announcements</a>');
+              return;
+            }
+            render();
+          })
+          .catch(function (err) {
+            if (err.status === 404) UI.showEmpty('#content', "We couldn't find this announcement.", '<a href="announcements.html" class="btn btn-primary mt-4">Back to announcements</a>');
+            else UI.showError('#content', err.message, load);
+          });
+      }
+
+      function render() {
+        document.title = item.title + ' · CivicEvents';
+        const src = mediaUrl(item.audio_url);
+        const transcript = item.transcript || item.transcript_text || '';
+
+        $('#content').html(`
+          <article>
+            <div class="flex flex-wrap items-center gap-2">
+              ${isAdmin ? MediaService.publishBadge(item) : ''}
+              <span class="text-sm text-slate-600">Posted <time datetime="${esc(item.created_at)}">${esc(UI.formatDate(item.created_at))}</time></span>
+            </div>
+            <h1 class="mt-2 text-2xl sm:text-3xl font-bold">${esc(item.title)}</h1>
+
+            <section class="mt-6" aria-label="Audio player">
+              ${MediaService.audioPlayerHtml(src, item.title)}
+            </section>
+
+            <section class="mt-6 card p-5" aria-labelledby="transcript-heading">
+              <h2 id="transcript-heading" class="text-lg font-semibold">Transcript</h2>
+              ${transcript
+                ? `<p class="mt-2 text-slate-700 whitespace-pre-line leading-relaxed">${esc(transcript)}</p>`
+                : '<p class="mt-2 text-slate-600">No transcript was provided for this announcement. If you need this information in another format, contact support.</p>'}
+            </section>
+
+            ${isAdmin ? `
+            <div class="mt-6 flex flex-wrap gap-3">
+              <a href="announcement-form.html?id=${encodeURIComponent(item.id)}" class="btn btn-primary">Edit</a>
+              <button type="button" id="toggle-publish" class="btn btn-secondary">${item.published === false ? 'Publish' : 'Unpublish'}</button>
+              <button type="button" id="delete-btn" class="btn btn-danger">Delete</button>
+            </div>` : ''}
+          </article>`);
+
+        MediaService.initAudioPlayer('#content');
+      }
+
+      $('#content').on('click', '#toggle-publish', function () {
+        const publish = item.published === false;
+        UI.setLoading(this, true, publish ? 'Publishing...' : 'Unpublishing...');
+        MediaService.setPublished('announcements', item.id, publish)
+          .then(function () {
+            item.published = publish;
+            UI.toast(publish ? 'Announcement published.' : 'Announcement unpublished.');
+            render();
+          })
+          .catch(function (err) { UI.setLoading('#toggle-publish', false); UI.toast(err.message, 'error'); });
+      });
+
+      $('#content').on('click', '#delete-btn', function () {
+        MediaService.remove('announcements', item, 'Announcement').then(function (deleted) {
+          if (deleted) { UI.setFlash('Announcement deleted.'); window.location.href = 'announcements.html'; }
+        });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>
