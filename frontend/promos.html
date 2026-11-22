@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Promos · CivicEvents</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+  <a href="#main" class="skip-link">Skip to main content</a>
+  <div id="app-header"></div>
+
+  <main id="main" class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-bold">Promos</h1>
+        <p class="mt-1 text-slate-600">Short city videos, all with captions.</p>
+      </div>
+      <a href="promo-form.html" class="btn btn-primary" data-admin-only>+ New promo</a>
+    </div>
+
+    <div class="mt-6 card p-4 grid gap-4 sm:grid-cols-3 items-end" role="search" aria-label="Filter promos">
+      <div class="sm:col-span-2">
+        <label for="search" class="label">Search</label>
+        <input id="search" type="search" class="input" placeholder="Search title or description" />
+      </div>
+      <div data-admin-only>
+        <label for="status" class="label">Status</label>
+        <select id="status" class="input">
+          <option value="">All</option>
+          <option value="published">Published</option>
+          <option value="draft">Drafts</option>
+        </select>
+      </div>
+    </div>
+
+    <section class="mt-8" aria-labelledby="results-heading">
+      <h2 id="results-heading" class="sr-only">Promo videos</h2>
+      <p id="summary" class="text-sm text-slate-600 mb-4" aria-live="polite"></p>
+      <div id="list" class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3"></div>
+    </section>
+  </main>
+
+  <div id="app-footer"></div>
+
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/media.js"></script>
+  <script>
+    $(function () {
+      // ROLE GUARD 1: any logged-in user can watch published promos.
+      // ROLE GUARD (UI): New / Edit / Publish / Delete controls are admin-only.
+      if (!Auth.requireAuth()) return;
+      Layout.init({ active: 'promos' });
+
+      const esc = UI.escapeHtml;
+      const isAdmin = Auth.isAdmin();
+      let items = [];
+      let searchTimer = null;
+
+      function load() {
+        UI.showSkeleton('#list', 6);
+        $('#summary').text('Loading promos…');
+        Api.cachedGet('/promos', null, 60000) // cached list, cleared on create/update/delete
+          .then(function (res) {
+            items = Api.toList(res).filter(MediaService.isVisible).sort(MediaService.newestFirst);
+            render();
+          })
+          .catch(function (err) {
+            $('#summary').text('');
+            UI.showError('#list', err.message, load);
+          });
+      }
+
+      function filtered() {
+        const term = $('#search').val().trim().toLowerCase();
+        const status = $('#status').val();
+        return items.filter(function (p) {
+          const text = ((p.title || '') + ' ' + (p.description || '')).toLowerCase();
+          if (term && text.indexOf(term) === -1) return false;
+          if (status === 'published' && p.published === false) return false;
+          if (status === 'draft' && p.published !== false) return false;
+          return true;
+        });
+      }
+
+      function cardHtml(p) {
+        const id = esc(p.id);
+        const title = esc(p.title);
+        const url = 'promo.html?id=' + encodeURIComponent(p.id);
+        const src = mediaUrl(p.video_url);
+
+        // Thumbnail: backend thumbnail if provided, otherwise the video's first frame (lazy-loaded)
+        const thumb = p.thumbnail_url
+          ? `<img src="${esc(mediaUrl(p.thumbnail_url))}" alt="" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />`
+          : `<video data-src="${esc(src)}#t=0.5" data-promo-id="${id}" preload="metadata" muted playsinline aria-hidden="true" tabindex="-1"
+                    class="absolute inset-0 h-full w-full object-cover"></video>`;
+
+        // ROLE GUARD (UI): admin controls only built for admins
+        const adminControls = isAdmin ? `
+          <div class="flex flex-wrap items-center gap-2 pt-3 mt-3 border-t border-slate-100">
+            ${MediaService.publishBadge(p)}
+            <a href="promo-form.html?id=${encodeURIComponent(p.id)}" class="btn btn-secondary btn-sm ml-auto" aria-label="Edit ${title}">Edit</a>
+            <button type="button" data-toggle-publish="${id}" class="btn btn-secondary btn-sm">${p.published === false ? 'Publish' : 'Unpublish'}<span class="sr-only"> ${title}</span></button>
+            <button type="button" data-delete="${id}" class="btn btn-danger btn-sm" aria-label="Delete ${title}">Delete</button>
+          </div>` : '';
+
+        return `
+          <article class="card overflow-hidden flex flex-col hover:shadow-md transition-shadow">
+            <div class="relative aspect-video bg-slate-900">
+              ${thumb}
+              <a href="${url}&play=1" class="absolute inset-0 flex items-center justify-center group focus:outline-none" aria-label="Play video: ${title}">
+                <span class="h-14 w-14 rounded-full bg-black/60 text-white flex items-center justify-center group-hover:bg-indigo-700 group-focus-visible:bg-indigo-700 group-focus-visible:ring-4 group-focus-visible:ring-white transition">
+                  ${MediaService.ICON.play}
+                </span>
+              </a>
+              <span class="absolute bottom-2 right-2 flex gap-1 pointer-events-none">
+                ${p.caption_text ? '<span class="px-1.5 py-0.5 rounded bg-black/70 text-white text-xs font-bold" title="Captions available">CC</span>' : ''}
+                <span data-duration-for="${id}" class="hidden px-1.5 py-0.5 rounded bg-black/70 text-white text-xs font-semibold tabular-nums"></span>
+              </span>
+            </div>
+            <div class="p-5 flex-1 flex flex-col">
+              <h2 class="text-lg font-semibold"><a href="${url}" class="hover:text-indigo-700 focus:outline-none focus-visible:underline">${title}</a></h2>
+              <p class="mt-1 text-xs text-slate-500"><time datetime="${esc(p.created_at)}">${esc(UI.formatDate(p.created_at, false))}</time></p>
+              <p class="mt-2 text-sm text-slate-600 line-clamp-2">${esc(p.description || '')}</p>
+              <div class="mt-auto">${adminControls}</div>
+            </div>
+          </article>`;
+      }
+
+      function render() {
+        if (!items.length) {
+          $('#summary').text('');
+          UI.showEmpty('#list', isAdmin ? 'No promos yet.' : 'No promos have been published yet.',
+            isAdmin ? '<a href="promo-form.html" class="btn btn-primary mt-4">Upload the first one</a>' : '');
+          return;
+        }
+        const list = filtered();
+        if (!list.length) {
+          $('#summary').text('0 promos found');
+          UI.showEmpty('#list', 'No promos match your search.');
+          return;
+        }
+        $('#summary').text(list.length + ' promo' + (list.length === 1 ? '' : 's'));
+        $('#list').attr('aria-busy', 'false').html(list.map(cardHtml).join(''));
+        MediaService.lazyLoadVideos('#list'); // videos only load when scrolled into view
+      }
+
+      // Show each video's length once its metadata has loaded (event doesn't bubble, so use capture)
+      $('#list')[0].addEventListener('loadedmetadata', function (e) {
+        const video = e.target;
+        const id = video.getAttribute && video.getAttribute('data-promo-id');
+        if (id && isFinite(video.duration)) {
+          $('[data-duration-for="' + id + '"]').text(UI.formatDuration(video.duration)).removeClass('hidden');
+        }
+      }, true);
+
+      $('#search').on('input', function () { clearTimeout(searchTimer); searchTimer = setTimeout(render, 250); });
+      $('#status').on('change', render);
+
+      // Admin: publish / unpublish (optimistic UI, reverted on failure)
+      $('#list').on('click', '[data-toggle-publish]', function () {
+        const id = $(this).attr('data-toggle-publish');
+        const p = items.find(function (x) { return x.id === id; });
+        const publish = p.published === false;
+        p.published = publish;
+        render();
+        MediaService.setPublished('promos', id, publish)
+          .then(function () { UI.toast(publish ? 'Promo published.' : 'Promo unpublished. Users can no longer see it.'); })
+          .catch(function (err) { p.published = !publish; render(); UI.toast(err.message, 'error'); });
+      });
+
+      // Admin: delete
+      $('#list').on('click', '[data-delete]', function () {
+        const id = $(this).attr('data-delete');
+        const p = items.find(function (x) { return x.id === id; });
+        MediaService.remove('promos', p, 'Promo').then(function (deleted) {
+          if (!deleted) return;
+          items = items.filter(function (x) { return x.id !== id; });
+          render();
+        });
+      });
+
+      load();
+    });
+  </script>
+</body>
+</html>
